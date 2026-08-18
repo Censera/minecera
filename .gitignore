@@ -1,0 +1,42 @@
+# Paper
+paper-*.jar
+versions/
+cache/
+libraries/
+
+# Runtime
+logs/
+debug/
+
+# Player and server state
+banned-ips.json
+banned-players.json
+ops.json
+usercache.json
+whitelist.json
+eula.txt
+
+# World runtime data
+world/*
+!world/
+world/datapacks/*
+!world/datapacks/
+!world/datapacks/datapacks.list
+
+# Temporary world data
+datapacks_temp/
+
+# Plugin binaries
+plugins/*.jar
+
+# Plugin runtime data
+plugins/floodgate/key.pem
+plugins/Geyser-Spigot/cache/
+plugins/Geyser-Spigot/packs/
+plugins/Geyser-Spigot/locales/overrides/
+plugins/Geyser-Spigot/extensions/
+plugins/Geyser-Spigot/custom_mappings/
+plugins/spark/tmp/
+
+# GuestMode account database
+plugins/GuestMode/accounts.yml
