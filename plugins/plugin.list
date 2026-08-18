@@ -1,5 +1,5 @@
-Geyser-Spigot.jar
-floodgate-spigot.jar
-ViaVersion.jar
-ViaBackwards.jar
-GuestMode.jar
+Geyser.jar (https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/fabric)
+Floodgate.jar (https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot)
+ViaVersion.jar (https://cdn.modrinth.com/data/P1OZGk5p/versions/ZH8459B6/ViaVersion-5.11.0.jar?mr_download_reason=standalone&mr_game_version=26.2&mr_loader=paper)
+ViaBackwards.jar (https://cdn.modrinth.com/data/NpvuJQoq/versions/hYhg2QBT/ViaBackwards-5.11.0.jar?mr_download_reason=standalone&mr_game_version=26.2&mr_loader=paper)
+GuestMode.jar (https://github.com/Censera/guestmode/releases/download/v3.5.2/GuestMode-3.5.0.jar)
