@@ -1,0 +1,23 @@
+1787034803440:stop
+1787035223451:java -Djava.net.preferIPv4Stack=true -Dsun.net.spi.nameservice.nameservers=8.8.8.8 -Dsun.net.spi.nameservice.provider.1=dns,sun -Xms2G -Xmx4G -jar paper-26.2.jar --noguiexport JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true -Dsun.net.spi.nameservice.nameservers=8.8.8.8 -Dsun.net.spi.nameservice.provider.1=dns,sun"
+1787035322497:gesyer help
+1787035331602:/gesyer help
+1787035338198:version
+1787035398947:/geyser help
+1787035413301:/geyser dump
+1787035632456:stop
+1787037815833:top
+1787037820954:stop
+1787038079293:nslookup client.discovery.minecraft-services.net
+1787038428065:geyser dump
+1787038472081:viaversion dump
+1787039315765:stop
+1787042024062:plugins
+1787042035026:guestmode
+1787042264702:restart
+1787042981842:guestmode
+1787043630073:stop
+1787044058836:top
+1787044061712:stop
+1787047035942:whitlist
+1787047611468:stop
