@@ -126,35 +126,20 @@ start_process() {
     local cwd="$2"
     local log="$3"
     local fifo="$4"
-    local fd_name="$5"
 
     rm -f "$fifo"
     mkfifo "$fifo"
     exec {fd}<->"$fifo"
 
     if [ "$mode" = "real" ]; then
-        SERVER_PID=""
         bash "$START" <&"$fd" >"$log" 2>&1 &
         SERVER_PID=$!
         SERVER_FD="$fd"
         SERVER_FIFO="$fifo"
         SERVER_LOG="$log"
     else
-        PROBE_PID=""
-        (
-            cd "$cwd" || exit 1
-            exec java -Xms2G -Xmx2G -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=200 \
-                -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem \
-                -jar "$JAR" --nogui --nojline \
-                -P "$cwd/plugins" \
-                -C "$cwd/commands.yml" \
-                -S "$cwd/spigot.yml" \
-                -b "$cwd/bukkit.yml" \
-                --paper-dir "$cwd/config" \
-                -c "$cwd/server.properties" \
-                -W "$cwd" \
-                -h 127.0.0.1 -p 0
-        ) <&"$fd" >"$log" 2>&1 &
+        MINECERA_ROOT="$cwd" MINECERA_JAR="$cwd/paper-26.2.jar" \
+            bash "$START" <&"$fd" >"$log" 2>&1 &
         PROBE_PID=$!
         PROBE_FD="$fd"
         PROBE_FIFO="$fifo"
@@ -167,7 +152,7 @@ start_server() {
     stamp="$(date +%Y%m%d-%H%M%S)"
     SERVER_LOG="$LOG_DIR/server-$stamp.log"
     report "starting Minecraft"
-    start_process real "$ROOT" "$SERVER_LOG" "$RUN/server.stdin" SERVER_FD
+    start_process real "$ROOT" "$SERVER_LOG" "$RUN/server.stdin"
 
     if ! wait_for_log "$SERVER_LOG" 'Done \(' "$START_TIMEOUT"; then
         report "startup health check failed"
@@ -231,17 +216,13 @@ prepare_probe() {
 
     cleanup_probe
     rm -rf -- "$probe"
-    mkdir -p "$probe/plugins"
-    cp -a "$backup/world" "$probe/world"
-    cp -a "$ROOT/server.properties" "$probe/server.properties"
-    cp -a "$ROOT/bukkit.yml" "$probe/bukkit.yml"
-    cp -a "$ROOT/commands.yml" "$probe/commands.yml"
-    cp -a "$ROOT/spigot.yml" "$probe/spigot.yml"
-    cp -a "$ROOT/config" "$probe/config"
+    mkdir -p "$probe"
 
-    [ -f "$ROOT/eula.txt" ] || return 1
-    cp "$ROOT/eula.txt" "$probe/eula.txt"
-    return 0
+    cp -a "$ROOT/plugins" "$probe/plugins"
+    cp -a "$ROOT/config" "$probe/config"
+    cp -a "$ROOT/bukkit.yml" "$ROOT/commands.yml" "$ROOT/spigot.yml" "$ROOT/server.properties" "$ROOT/eula.txt" "$probe/"
+    cp "$JAR" "$probe/paper-26.2.jar"
+    cp -a "$backup/world" "$probe/world"
 }
 
 validate_backup() {
@@ -257,7 +238,7 @@ validate_backup() {
 
     stamp="$(date +%Y%m%d-%H%M%S)"
     PROBE_LOG="$LOG_DIR/backup-test-$stamp.log"
-    start_process probe "$probe" "$PROBE_LOG" "$RUN/probe.stdin" PROBE_FD
+    start_process probe "$probe" "$PROBE_LOG" "$RUN/probe.stdin"
 
     if ! wait_for_log "$PROBE_LOG" 'Done \(' "$START_TIMEOUT"; then
         report "backup failed startup validation"
@@ -281,6 +262,7 @@ validate_backup() {
 
 create_backup() {
     local date stamp candidate
+    local offset
 
     date="$(date +%F)"
     stamp="$(date +%Y%m%d-%H%M%S)"
@@ -292,16 +274,21 @@ create_backup() {
     }
 
     report "flushing world to disk"
-    local offset
     offset=$(wc -c < "$SERVER_LOG")
     printf '%s\n' "save-all flush" >&"$SERVER_FD" || return 1
-    if ! for _ in $(seq 1 30); do
-        tail -c +$((offset + 1)) "$SERVER_LOG" 2>/dev/null | grep -q 'Saved the game' && break
+
+    local saved=0
+    for _ in $(seq 1 30); do
+        if tail -c +$((offset + 1)) "$SERVER_LOG" 2>/dev/null | grep -q 'Saved the game'; then
+            saved=1
+            break
+        fi
         sleep 1
-    done; then
+    done
+    [ "$saved" -eq 1 ] || {
         report "world save confirmation failed"
         return 1
-    fi
+    }
 
     stop_server
 
@@ -353,11 +340,11 @@ restore_backup() {
     quarantine=$(quarantine_world) || return 1
 
     report "restoring backup: $(basename "$backup")"
-    cp -a "$backup/world" "$WORLD" || {
+    if ! cp -a "$backup/world" "$WORLD"; then
         rm -rf -- "$WORLD"
         mv "$quarantine" "$WORLD"
         return 1
-    }
+    fi
 
     if start_server; then
         report "restored world passed health verification"
