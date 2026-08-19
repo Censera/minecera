@@ -1,28 +1,92 @@
 #!/usr/bin/env bash
-set -e
+set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTROL="$ROOT/run/control"
+LOG="$ROOT/logs/supervisor.log"
 
-[ -p "$CONTROL" ] || {
-    printf 'minecera is not running\n' >&2
-    exit 1
+is_running() {
+    [ -p "$CONTROL" ]
 }
 
-case "${1:-}" in
-    status|start|stop|restart|backup|save|reload)
-        printf '%s\n' "$1" > "$CONTROL"
-        ;;
-    console)
-        shift
-        [ "$#" -gt 0 ] || {
-            printf 'usage: minecera console <minecraft-command>\n' >&2
-            exit 2
-        }
-        printf '%s\n' "$*" > "$CONTROL"
-        ;;
-    *)
-        printf 'usage: minecera {status|start|stop|restart|backup|save|reload|console <command>}\n' >&2
-        exit 2
-        ;;
-esac
+print_header() {
+    clear 2>/dev/null || true
+    printf '\nMinecera\n'
+    printf '──────────────\n'
+    if is_running; then
+        printf '● supervisor connected\n'
+    else
+        printf '○ supervisor offline\n'
+    fi
+    printf '\n'
+}
+
+send() {
+    local command="$1"
+
+    if ! is_running; then
+        printf 'minecera: supervisor is not running\n'
+        return 1
+    fi
+
+    printf '%s\n' "$command" > "$CONTROL"
+}
+
+show_help() {
+    printf '%s\n' \
+        '  status    show server status' \
+        '  save      save the world' \
+        '  backup    create a verified backup' \
+        '  restart   restart Minecraft' \
+        '  stop      stop Minecraft' \
+        '  start     start Minecraft' \
+        '  reload    reload plugins' \
+        '  console   enter a Minecraft command directly' \
+        '  logs      show recent supervisor output' \
+        '  clear     clear the screen' \
+        '  help      show this help' \
+        '  exit      leave the console'
+}
+
+print_header
+printf 'Type help for commands.\n\n'
+
+while true; do
+    if ! is_running; then
+        printf 'minecera: supervisor went offline\n'
+        break
+    fi
+
+    read -e -r -p '> ' command || break
+    [ -n "$command" ] || continue
+
+    case "$command" in
+        exit|quit)
+            break
+            ;;
+        help)
+            show_help
+            ;;
+        clear)
+            print_header
+            ;;
+        logs)
+            tail -n 20 "$LOG" 2>/dev/null || printf 'no supervisor log yet\n'
+            ;;
+        console)
+            printf 'usage: console <minecraft-command>\n'
+            ;;
+        console\ *)
+            send "${command#console }"
+            ;;
+        status|save|backup|restart|stop|start|reload)
+            send "$command"
+            ;;
+        *)
+            send "$command"
+            ;;
+    esac
+
+done
+
+printf '\n'
