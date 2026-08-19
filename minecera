@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -e
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTROL="$ROOT/run/control"
+
+[ -p "$CONTROL" ] || {
+    printf 'minecera is not running\n' >&2
+    exit 1
+}
+
+case "${1:-}" in
+    status|start|stop|restart|backup|save|reload)
+        printf '%s\n' "$1" > "$CONTROL"
+        ;;
+    console)
+        shift
+        [ "$#" -gt 0 ] || {
+            printf 'usage: minecera console <minecraft-command>\n' >&2
+            exit 2
+        }
+        printf '%s\n' "$*" > "$CONTROL"
+        ;;
+    *)
+        printf 'usage: minecera {status|start|stop|restart|backup|save|reload|console <command>}\n' >&2
+        exit 2
+        ;;
+esac
