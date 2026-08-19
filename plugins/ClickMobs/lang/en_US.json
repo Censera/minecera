@@ -1,0 +1,18 @@
+{
+  "version": 4,
+  "credit": ["Clickism"],
+  "update": "ClickMobs: §a§lNew version available: §f{version}",
+  "no_permission": "You don't have permission to do this.",
+  "pick_up": "You picked up a {mob}",
+  "blacklisted_mob": "You can't pick up this mob",
+  "write_error": "Failed to write mob data.",
+  "read_error": "Failed to read mob data.",
+  "baby_mob": "Baby {mob}",
+  "mob.lore": [
+    "§8Right click to place the {mob} back."
+  ],
+  "config_set": "Config option \"&l{option}&a\" set to &l{value}.",
+  "config_get": "Config option \"&l{option}&a\" has value &l{value}.",
+  "config_path": "The config file is located at: &f{path}",
+  "config_reload": "Reloaded the config file."
+}

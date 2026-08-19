@@ -1,0 +1,89 @@
+# ---------------------------------------------------------
+# ClickMobs Config
+# NOTE: RELOAD/RESTART SERVER FOR CHANGES TO TAKE EFFECT
+# ---------------------------------------------------------
+
+_version: 8
+
+# Language of the plugin.
+# Currently supported languages: en_US, de_DE
+# Default: en_US
+language: en_US
+
+# Whether to check for updates on server startup. Strongly Recommended.
+# Default: true
+check_update: true
+
+# Whether to have specific permissions for each mob.
+# For example, players won't be able to pick up a creeper unless they have
+# BOTH "clickmobs.pickup" and "clickmobs.pickup.creeper" permissions.
+# - Whitelisted mobs will still be able to be picked up without a mob-specific permission.
+# - Blacklisted mobs will not be able to be picked up even with a mob-specific permission.
+# Default: false
+per_mob_permissions: false
+
+# Whether dispensers can dispense picked up mobs.
+# Default: true
+enable_dispensers: true
+
+# ---------------------------------------------------------
+# In the following section you can whitelist/blacklist mobs.
+# ---------------------------------------------------------
+# To whitelist/blacklist a vanilla mob, add its entity name.
+#     i.E: "creeper" or "ender_dragon"
+# ---------------------------------------------------------
+# You can also use tags (predicates) to whitelist/blacklist mobs with certain properties.
+# Available tags are:
+#     ?all, ?hostile, ?baby, ?tamed, ?nametagged, ?silent, ?mob
+# 
+# You can (optionally) pass arguments to certain tags:
+#     - ?nametagged(Dinnerbone)
+# You can combine multiple tags:
+#     - ?tamed ?nametagged
+# You can negate tags using "not":
+#     - not ?hostile
+# You can use the ?mob tag alongside other tags to use tags on specific mobs:
+#     - ?mob(creeper, zombie) ?nametagged(Friendly!)
+# You can use the ?customdata tag to target mobs added by other plugins or mobs with
+# custom data. Please read the wiki for more information on this tag.
+# 
+# Check the wiki for more documentation on tags:
+# https://clickism.de/docs/clickmobs/tags
+# ---------------------------------------------------------
+
+# Mobs that are allowed to be picked up.
+# The whitelist takes precedence over the blacklist.
+# (Blacklisted mobs included in the whitelist will still be allowed)
+# Default: [cow, pig, sheep]
+whitelisted_mobs:
+- cow
+- pig
+- sheep
+
+# Mobs that are not allowed to be picked up.
+# Default: [?hostile, wither, ender_dragon]
+blacklisted_mobs:
+- ?hostile
+- wither
+- ender_dragon
+
+# Items that prevent picking up mobs when held in hand.
+# Use the item names (material names) of the items.
+# 
+# Harnesses are always blocked for Happy Ghast compatibility
+# and do not need to be added here.
+# 
+# Use the tag "?all" to block all items. This will make it so players
+# can only pick up mobs with an empty hand.
+# Default: [lead, saddle]
+blacklisted_items_in_hand:
+- lead
+- saddle
+
+# Set a custom model data for the picked up mobs.
+# This is useful for resource packs that want to change the model/texture of picked up mobs.
+# Value 0 will not change the model.
+# Default: {skeleton=0, creeper=0}
+custom_model_data:
+  skeleton: 0
+  creeper: 0
