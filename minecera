@@ -2,21 +2,19 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONTROL="$ROOT/run/control"
 SERVER_INPUT="$ROOT/run/server.stdin"
-SUPERVISOR_LOG="$ROOT/logs/supervisor.log"
-LOG_LINES=12
+LOG_LINES=14
+FRAME=0.25
 RUNNING=1
 INPUT=""
+MESSAGE=""
 
 cleanup() {
     stty sane 2>/dev/null || true
-    printf '\033[?25h\033[0m\n'
+    printf '\033[?25h\033[0m\033[?1049l'
 }
 trap cleanup EXIT INT TERM
-
-is_running() {
-    [ -p "$SERVER_INPUT" ]
-}
 
 server_pid() {
     pgrep -f '^java .*paper-26\.2\.jar' | head -n1
@@ -26,123 +24,138 @@ server_log() {
     ls -1t "$ROOT"/logs/server-*.log 2>/dev/null | head -n1
 }
 
+journal_lines() {
+    journalctl -u minecera.service -n "$LOG_LINES" -o cat --no-pager 2>/dev/null
+}
+
+log_lines() {
+    local journal
+    journal=$(journal_lines)
+    if [ -n "$journal" ]; then
+        printf '%s\n' "$journal"
+        return
+    fi
+
+    local log
+    log=$(server_log)
+    if [ -n "$log" ] && [ -f "$log" ]; then
+        tail -n "$LOG_LINES" "$log"
+    else
+        printf 'no log available\n'
+    fi
+}
+
 backup_count() {
     find "$ROOT/backups" -mindepth 2 -maxdepth 2 -type f -name HEALTHY 2>/dev/null | wc -l
 }
 
 latest_backup() {
-    find "$ROOT/backups" -mindepth 2 -maxdepth 2 -type f -name HEALTHY -printf '%h\n' 2>/dev/null | sort -r | head -n1 | xargs -r basename
+    find "$ROOT/backups" -mindepth 2 -maxdepth 2 -type f -name HEALTHY -printf '%h\n' 2>/dev/null |
+        sort -r | head -n1 | xargs -r basename
 }
 
-value_or_dash() {
-    [ -n "$1" ] && printf '%s' "$1" || printf '-'
+supervisor_event() {
+    journalctl -u minecera.service -n 1 -o cat --no-pager 2>/dev/null |
+        sed 's/.*bash\[[0-9]*\]: //' | cut -c1-100
 }
 
-render() {
-    local pid log cpu mem uptime load disk backups newest supervisor
-    local rows cols used
-
-    rows=$(tput lines 2>/dev/null || printf '24')
-    cols=$(tput cols 2>/dev/null || printf '80')
-    pid=$(server_pid)
-    log=$(server_log)
-    backups=$(backup_count)
-    newest=$(latest_backup)
-    supervisor=$(tail -n1 "$SUPERVISOR_LOG" 2>/dev/null)
-    load=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null)
-    disk=$(df -h "$ROOT" 2>/dev/null | awk 'NR==2 {print $3"/"$2" ("$5")"}')
-
-    if [ -n "$pid" ]; then
-        cpu=$(ps -p "$pid" -o %cpu= 2>/dev/null | xargs)
-        mem=$(ps -p "$pid" -o rss= 2>/dev/null | awk '{printf "%.1fG", $1/1024/1024}')
-        uptime=$(ps -p "$pid" -o etime= 2>/dev/null | xargs)
-    else
-        cpu='-'
-        mem='-'
-        uptime='-'
-    fi
-
-    printf '\033[H\033[2J'
-    printf ' Minecera\n'
-    printf ' %s\n' '──────────────────────────────────────────────────────────────────────────────'
-
-    if [ -n "$pid" ]; then
-        printf ' SERVER   ● RUNNING    PID %-7s   UPTIME %-10s\n' "$pid" "$uptime"
-    else
-        printf ' SERVER   ○ OFFLINE\n'
-    fi
-    printf ' MEMORY   %-8s     CPU %-7s      LOAD %-17s\n' "$(value_or_dash "$mem")" "$(value_or_dash "$cpu")" "$(value_or_dash "$load")"
-    printf ' DISK     %-18s   BACKUPS %-3s      LAST %-18s\n' "$(value_or_dash "$disk")" "$backups" "$(value_or_dash "$newest")"
-    printf ' EVENT    %s\n' "$(value_or_dash "$supervisor")"
-    printf ' %s\n' '──────────────────────────────────────────────────────────────────────────────'
-    printf ' LOG\n'
-
-    if [ -n "$log" ] && [ -f "$log" ]; then
-        tail -n "$LOG_LINES" "$log" | sed 's/\r//g' | cut -c1-$((cols - 1))
-    else
-        printf ' no Minecraft log yet\n'
-    fi
-
-    used=$((rows - LOG_LINES - 9))
-    [ "$used" -lt 1 ] && used=1
-    printf '%*s\n' "$used" ''
-    printf ' %s' '> '
-    printf '%s' "$INPUT"
-    printf '\033[?25l'
+command_send() {
+    printf '%s\n' "$1" > "$CONTROL"
 }
 
-send_minecraft() {
-    local command="$1"
-
-    if ! is_running; then
-        INPUT='server stdin is unavailable'
-        return 1
-    fi
-
-    printf '%s\n' "$command" > "$SERVER_INPUT"
-}
-
-show_help() {
-    INPUT='help: status save reload backup restart stop start exit'
+minecraft_send() {
+    printf '%s\n' "$1" > "$SERVER_INPUT"
 }
 
 run_command() {
     local command="$1"
-
     [ -n "$command" ] || return
 
     case "$command" in
         exit|quit)
             RUNNING=0
+            return
             ;;
         help)
-            show_help
+            MESSAGE='status  save  backup  restart  stop  start  reload  clear  exit | anything else = Minecraft'
             ;;
-        status)
-            if [ -n "$(server_pid)" ]; then
-                INPUT="server running pid=$(server_pid)"
-            else
-                INPUT='server offline'
-            fi
+        clear)
+            MESSAGE=""
             ;;
-        backup|restart|stop|start)
-            INPUT="$command is a supervisor operation"
+        status|backup|restart|stop|start|reload)
+            command_send "$command"
+            MESSAGE="sent: $command"
+            ;;
+        save)
+            minecraft_send 'save-all flush'
+            MESSAGE='sent: save-all flush'
             ;;
         *)
-            if ! send_minecraft "$command"; then
-                sleep 1
-            fi
+            minecraft_send "$command"
+            MESSAGE="sent: $command"
             ;;
     esac
 }
 
+render() {
+    local rows cols width log pid cpu mem uptime load disk backups newest event
+    rows=$(tput lines 2>/dev/null || printf '24')
+    cols=$(tput cols 2>/dev/null || printf '80')
+    width=$((cols - 2))
+    [ "$width" -lt 40 ] && width=40
+
+    pid=$(server_pid)
+    backups=$(backup_count)
+    newest=$(latest_backup)
+    load=$(awk '{printf "%s %s %s", $1, $2, $3}' /proc/loadavg 2>/dev/null)
+    disk=$(df -h "$ROOT" 2>/dev/null | awk 'NR==2 {print $3 "/" $2 " (" $5 ")"}')
+    event=$(supervisor_event)
+
+    if [ -n "$pid" ]; then
+        cpu=$(ps -p "$pid" -o %cpu= 2>/dev/null | xargs)
+        mem=$(ps -p "$pid" -o rss= 2>/dev/null | awk '{printf "%.1fG", $1/1024/1024}')
+        uptime=$(ps -p "$pid" -o etime= 2>/dev/null | xargs)
+        printf '\033[?25l\033[H\033[2J'
+        printf ' Minecera\n'
+        printf ' %s\n' "$(printf '─%.0s' $(seq 1 "$width"))"
+        printf ' SERVER    ● RUNNING     PID %-7s  UPTIME %-10s\n' "$pid" "$uptime"
+    else
+        cpu='-'
+        mem='-'
+        uptime='-'
+        printf '\033[?25l\033[H\033[2J'
+        printf ' Minecera\n'
+        printf ' %s\n' "$(printf '─%.0s' $(seq 1 "$width"))"
+        printf ' SERVER    ○ OFFLINE\n'
+    fi
+
+    printf ' MEMORY    %-8s      CPU %-7s       LOAD %-17s\n' "$mem" "$cpu" "$load"
+    printf ' DISK      %-18s  BACKUPS %-3s       LAST %-18s\n' "$disk" "$backups" "${newest:--}"
+    printf ' EVENT     %-*s\n' "$((width - 9))" "${event:--}"
+    printf ' %s\n' "$(printf '─%.0s' $(seq 1 "$width"))"
+    printf ' JOURNAL\n'
+
+    log=$(log_lines)
+    while IFS= read -r line; do
+        printf '%s\n' "$line" | sed 's/\r//g' | cut -c1-$width
+    done <<< "$log"
+
+    local used=$((rows - LOG_LINES - 9))
+    [ "$used" -lt 1 ] && used=1
+    printf '%*s\n' "$used" ''
+
+    printf ' %s\n' "$(printf '─%.0s' $(seq 1 "$width"))"
+    [ -n "$MESSAGE" ] && printf ' %s\n' "$MESSAGE"
+    printf ' > %s' "$INPUT"
+}
+
 stty -icanon -echo min 0 time 1
-printf '\033[?25l'
+printf '\033[?1049h\033[?25l'
 
 while [ "$RUNNING" -eq 1 ]; do
     render
 
-    if IFS= read -r -N1 char; then
+    if IFS= read -r -N1 -t "$FRAME" char; then
         case "$char" in
             $'\n'|$'\r')
                 command="$INPUT"
@@ -154,12 +167,13 @@ while [ "$RUNNING" -eq 1 ]; do
                 ;;
             $'\003')
                 INPUT=""
+                MESSAGE='input cleared'
                 ;;
             $'\004')
                 RUNNING=0
                 ;;
             $'\033')
-                IFS= read -r -N2 discard
+                IFS= read -r -N2 -t 0.01 discard
                 ;;
             *)
                 INPUT+="$char"
