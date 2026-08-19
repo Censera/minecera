@@ -3,90 +3,155 @@ set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTROL="$ROOT/run/control"
-LOG="$ROOT/logs/supervisor.log"
+SUPERVISOR_LOG="$ROOT/logs/supervisor.log"
+LOG_LINES=12
+RUNNING=1
+INPUT=""
+LAST_RENDER=0
+
+cleanup() {
+    stty sane 2>/dev/null || true
+    printf '\033[?25h\033[0m\n'
+}
+trap cleanup EXIT INT TERM
 
 is_running() {
     [ -p "$CONTROL" ]
 }
 
-print_header() {
-    clear 2>/dev/null || true
-    printf '\nMinecera\n'
-    printf '──────────────\n'
-    if is_running; then
-        printf '● supervisor connected\n'
+server_pid() {
+    pgrep -f '^java .*paper-26\.2\.jar' | head -n1
+}
+
+server_log() {
+    ls -1t "$ROOT"/logs/server-*.log 2>/dev/null | head -n1
+}
+
+backup_count() {
+    find "$ROOT/backups" -mindepth 2 -maxdepth 2 -type f -name HEALTHY 2>/dev/null | wc -l
+}
+
+latest_backup() {
+    find "$ROOT/backups" -mindepth 2 -maxdepth 2 -type f -name HEALTHY -printf '%h\n' 2>/dev/null | sort -r | head -n1 | xargs -r basename
+}
+
+value_or_dash() {
+    [ -n "$1" ] && printf '%s' "$1" || printf '-'
+}
+
+render() {
+    local pid log cpu mem uptime load disk backups newest supervisor lines
+    local rows cols
+
+    rows=$(tput lines 2>/dev/null || printf '24')
+    cols=$(tput cols 2>/dev/null || printf '80')
+    pid=$(server_pid)
+    log=$(server_log)
+    backups=$(backup_count)
+    newest=$(latest_backup)
+    supervisor=$(tail -n1 "$SUPERVISOR_LOG" 2>/dev/null)
+    load=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null)
+    disk=$(df -h "$ROOT" 2>/dev/null | awk 'NR==2 {print $3"/"$2" ("$5")"}')
+
+    if [ -n "$pid" ]; then
+        cpu=$(ps -p "$pid" -o %cpu= 2>/dev/null | xargs)
+        mem=$(ps -p "$pid" -o rss= 2>/dev/null | awk '{printf "%.1fG", $1/1024/1024}')
+        uptime=$(ps -p "$pid" -o etime= 2>/dev/null | xargs)
     else
-        printf '○ supervisor offline\n'
+        cpu='-'
+        mem='-'
+        uptime='-'
     fi
-    printf '\n'
+
+    printf '\033[H\033[2J'
+    printf ' Minecera\n'
+    printf ' %s\n' '──────────────────────────────────────────────────────────────────────────────'
+
+    if [ -n "$pid" ]; then
+        printf ' SERVER   ● RUNNING    PID %-7s   UPTIME %-10s\n' "$pid" "$uptime"
+    else
+        printf ' SERVER   ○ OFFLINE\n'
+    fi
+    printf ' MEMORY   %-8s     CPU %-7s      LOAD %-17s\n' "$(value_or_dash "$mem")" "$(value_or_dash "$cpu")" "$(value_or_dash "$load")"
+    printf ' DISK     %-18s   BACKUPS %-3s      LAST %-18s\n' "$(value_or_dash "$disk")" "$backups" "$(value_or_dash "$newest")"
+    printf ' EVENT    %s\n' "$(value_or_dash "$supervisor")"
+    printf ' %s\n' '──────────────────────────────────────────────────────────────────────────────'
+    printf ' LOG\n'
+
+    if [ -n "$log" ] && [ -f "$log" ]; then
+        tail -n "$LOG_LINES" "$log" | sed "s/\r//g" | cut -c1-$((cols - 1))
+    else
+        printf ' no Minecraft log yet\n'
+    fi
+
+    local used=$((rows - LOG_LINES - 9))
+    [ "$used" -lt 1 ] && used=1
+    printf '%*s\n' "$used" ''
+    printf ' %s' '> '
+    printf '%s' "$INPUT"
+    printf '\033[?25l'
 }
 
 send() {
     local command="$1"
-
-    if ! is_running; then
-        printf 'minecera: supervisor is not running\n'
-        return 1
-    fi
-
-    printf '%s\n' "$command" > "$CONTROL"
+    is_running || return 1
+    timeout 1 bash -c 'printf "%s\n" "$1" > "$2"' _ "$command" "$CONTROL" 2>/dev/null
 }
 
-show_help() {
-    printf '%s\n' \
-        '  status    show server status' \
-        '  save      save the world' \
-        '  backup    create a verified backup' \
-        '  restart   restart Minecraft' \
-        '  stop      stop Minecraft' \
-        '  start     start Minecraft' \
-        '  reload    reload plugins' \
-        '  console   enter a Minecraft command directly' \
-        '  logs      show recent supervisor output' \
-        '  clear     clear the screen' \
-        '  help      show this help' \
-        '  exit      leave the console'
-}
+run_command() {
+    local command="$1"
 
-print_header
-printf 'Type help for commands.\n\n'
-
-while true; do
-    if ! is_running; then
-        printf 'minecera: supervisor went offline\n'
-        break
-    fi
-
-    read -e -r -p '> ' command || break
-    [ -n "$command" ] || continue
+    [ -n "$command" ] || return
 
     case "$command" in
         exit|quit)
-            break
-            ;;
-        help)
-            show_help
+            RUNNING=0
+            return
             ;;
         clear)
-            print_header
+            return
             ;;
-        logs)
-            tail -n 20 "$LOG" 2>/dev/null || printf 'no supervisor log yet\n'
-            ;;
-        console)
-            printf 'usage: console <minecraft-command>\n'
-            ;;
-        console\ *)
-            send "${command#console }"
-            ;;
-        status|save|backup|restart|stop|start|reload)
-            send "$command"
+        help)
+            send "help"
             ;;
         *)
-            send "$command"
+            if ! send "$command"; then
+                INPUT='supervisor is not running'
+                sleep 1
+            fi
             ;;
     esac
+}
+
+stty -icanon -echo min 0 time 1
+printf '\033[?25l'
+
+while [ "$RUNNING" -eq 1 ]; do
+    render
+
+    if IFS= read -r -N1 char; then
+        case "$char" in
+            $'\n'|$'\r')
+                command="$INPUT"
+                INPUT=""
+                run_command "$command"
+                ;;
+            $'\177'|$'\b')
+                INPUT="${INPUT%?}"
+                ;;
+            $'\003')
+                INPUT=""
+                ;;
+            $'\004')
+                RUNNING=0
+                ;;
+            $'\033')
+                IFS= read -r -N2 discard
+                ;;
+            *)
+                INPUT+="$char"
+                ;;
+        esac
+    fi
 
 done
-
-printf '\n'
