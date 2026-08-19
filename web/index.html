@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Minecera</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3}*{box-sizing:border-box}body{margin:0;background:#0d1117}main{max-width:1400px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}.title{font-size:24px;font-weight:700}.state{padding:5px 10px;border-radius:999px;background:#21262d}.state.running{color:#3fb950}.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}.label{font-size:11px;color:#8b949e;text-transform:uppercase}.value{margin-top:5px;font-size:18px;font-variant-numeric:tabular-nums}.controls{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.button{border:1px solid #30363d;background:#21262d;color:#e6edf3;padding:9px 14px;border-radius:6px;cursor:pointer}.button:hover{background:#30363d}.button.danger{color:#ff7b72}.log{height:60vh;overflow:auto;background:#010409;border:1px solid #30363d;border-radius:8px;padding:14px;font:13px/1.45 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap}.event{margin:12px 0;color:#8b949e;font-size:13px}.command{display:flex;margin-top:10px}.command input{flex:1;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px 0 0 6px;padding:10px;font:14px monospace}.command button{border-radius:0 6px 6px 0}.muted{color:#8b949e}@media(max-width:900px){.grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:550px){main{padding:12px}.grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body><main>
+<div class="top"><div class="title">Minecera</div><div id="state" class="state">loading</div></div>
+<section class="grid">
+<div class="card"><div class="label">PID</div><div id="pid" class="value">-</div></div>
+<div class="card"><div class="label">Uptime</div><div id="uptime" class="value">-</div></div>
+<div class="card"><div class="label">CPU</div><div id="cpu" class="value">-</div></div>
+<div class="card"><div class="label">Memory</div><div id="memory" class="value">-</div></div>
+<div class="card"><div class="label">Load</div><div id="load" class="value">-</div></div>
+<div class="card"><div class="label">Disk</div><div id="disk" class="value">-</div></div>
+<div class="card"><div class="label">Backups</div><div id="backups" class="value">-</div></div>
+<div class="card"><div class="label">Last backup</div><div id="lastBackup" class="value">-</div></div>
+</section>
+<div class="controls">
+<button class="button" onclick="control('start')">Start</button><button class="button" onclick="control('restart')">Restart</button><button class="button" onclick="control('backup')">Backup</button><button class="button" onclick="control('save')">Save</button><button class="button" onclick="control('reload')">Reload</button><button class="button danger" onclick="control('stop')">Stop</button>
+</div>
+<div id="event" class="event">Waiting for supervisor event.</div>
+<div id="log" class="log">Connecting...</div>
+<form class="command" onsubmit="sendCommand(event)"><input id="command" autocomplete="off" placeholder="Minecraft console command"><button class="button" type="submit">Send</button></form>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+function render(s){const x=s.status;const state=$('state');state.textContent=x.state.toUpperCase();state.className='state '+(x.state==='running'?'running':'');$('pid').textContent=x.pid||'-';$('uptime').textContent=x.uptime||'-';$('cpu').textContent=x.cpu||'-';$('memory').textContent=x.memory||'-';$('load').textContent=x.load||'-';$('disk').textContent=x.disk||'-';$('backups').textContent=x.backups;$('lastBackup').textContent=x.lastBackup||'-';$('event').textContent=x.journalEvent||'-';if(s.logs)$('log').textContent=s.logs.join('\n');}
+async function control(action){const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});if(!r.ok)alert(await r.text());}
+async function sendCommand(e){e.preventDefault();const input=$('command');const command=input.value.trim();if(!command)return;const r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command})});if(!r.ok)alert(await r.text());input.value='';}
+async function load(){const r=await fetch('/api/status');render(await r.json());}
+const events=new EventSource('/api/events');events.addEventListener('snapshot',e=>render(JSON.parse(e.data)));events.onerror=()=>{$('state').textContent='DISCONNECTED';$('state').className='state'};load();
+</script>
+</body></html>
