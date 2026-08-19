@@ -1,8 +1,8 @@
 package main
 
 import (
+	_ "embed"
 	"crypto/rand"
-	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -245,9 +246,14 @@ func (a *App) sendMinecraft(command string) error {
 }
 
 func writeFIFO(path, value string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_NONBLOCK, 0)
+	fd, err := syscall.Open(path, syscall.O_WRONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return fmt.Errorf("open control channel: %w", err)
+	}
+	f := os.NewFile(uintptr(fd), path)
+	if f == nil {
+		_ = syscall.Close(fd)
+		return fmt.Errorf("open control channel: invalid file")
 	}
 	defer f.Close()
 	if _, err := fmt.Fprintln(f, value); err != nil {
