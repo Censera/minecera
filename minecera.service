@@ -7,11 +7,11 @@ Wants=network-online.target
 Type=simple
 User=censera
 WorkingDirectory=/home/censera/minecraft
-ExecStart=/home/censera/minecraft/start.sh
-Restart=always
+ExecStart=/home/censera/minecraft/minecera-supervisor.sh
+Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT
-TimeoutStopSec=120
+TimeoutStopSec=180
 LimitNOFILE=65535
 
 [Install]
