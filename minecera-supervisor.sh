@@ -12,14 +12,18 @@ LOG_DIR="$ROOT/logs"
 CONTROL="$RUN/control"
 
 START_TIMEOUT=180
-COMMAND_TIMEOUT=15
 STOP_TIMEOUT=120
-MONITOR_INTERVAL=1
+COMMAND_TIMEOUT=15
+MONITOR_INTERVAL=30
+POLL_INTERVAL=0.2
 BACKUP_HOUR=04
 KEEP_BACKUPS=3
 PROBE_XMS=512M
 PROBE_XMX=1G
 
+STATE_RUNNING=running
+STATE_STOPPED=stopped
+DESIRED_STATE="$STATE_RUNNING"
 SERVER_PID=""
 SERVER_FD=""
 SERVER_FIFO=""
@@ -33,20 +37,6 @@ report() {
     logger -t minecera -- "$*" 2>/dev/null || true
 }
 
-filter_server_output() {
-    local log="$1"
-    local health="$2"
-    local line
-
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\ [A-Z]+\]:\ There\ are\ [0-9]+\ of\ a\ max\ of\ [0-9]+\ players\ online: ]]; then
-            printf '%s\n' "$line" >> "$health"
-        else
-            printf '%s\n' "$line" >> "$log"
-        fi
-    done
-}
-
 close_fd() {
     local fd="$1"
     eval "exec ${fd}>&-" 2>/dev/null || true
@@ -57,28 +47,29 @@ cleanup_server() {
         close_fd "$SERVER_FD"
         SERVER_FD=""
     fi
-
     if [ -n "$SERVER_FIFO" ]; then
         rm -f "$SERVER_FIFO"
         SERVER_FIFO=""
     fi
-
     SERVER_PID=""
+    SERVER_LOG=""
     SERVER_HEALTH_LOG=""
 }
 
 force_stop_server() {
     local pid="$SERVER_PID"
-    [ -n "$pid" ] || return 0
+    [ -n "$pid" ] || {
+        cleanup_server
+        return 0
+    }
 
     if kill -0 "$pid" 2>/dev/null; then
         kill -KILL "$pid" 2>/dev/null || true
-        for _ in $(seq 1 20); do
+        for _ in $(seq 1 50); do
             kill -0 "$pid" 2>/dev/null || break
             sleep 0.1
         done
     fi
-
     cleanup_server
 }
 
@@ -105,11 +96,13 @@ stop_server() {
 
     report "graceful stop timed out; forcing Minecraft down"
     force_stop_server
+    report "Minecraft stopped"
 }
 
 shutdown() {
     [ "$SHUTTING_DOWN" -eq 1 ] && return
     SHUTTING_DOWN=1
+    DESIRED_STATE="$STATE_STOPPED"
     report "shutdown requested"
     stop_server
     [ -n "$CONTROL_FD" ] && close_fd "$CONTROL_FD"
@@ -126,6 +119,20 @@ ensure_dirs() {
     exec {CONTROL_FD}<>"$CONTROL"
 }
 
+filter_server_output() {
+    local log="$1"
+    local health="$2"
+    local line
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\ [A-Z]+\]:\ There\ are\ [0-9]+\ of\ a\ max\ of\ [0-9]+\ players\ online: ]]; then
+            printf '%s\n' "$line" >> "$health"
+        else
+            printf '%s\n' "$line" >> "$log"
+        fi
+    done
+}
+
 wait_for_log() {
     local pid="$1"
     local log="$2"
@@ -140,19 +147,18 @@ wait_for_log() {
     return 1
 }
 
-command_ok() {
+health_check() {
     local pid="$1"
     local fd="$2"
     local health_log="$3"
-    local pattern="$4"
-    local timeout="$5"
     local offset
 
     offset=$(wc -c < "$health_log" 2>/dev/null || printf '0')
     printf '%s\n' "list" >&"$fd" 2>/dev/null || return 1
 
-    for _ in $(seq 1 "$timeout"); do
-        tail -c +$((offset + 1)) "$health_log" 2>/dev/null | grep -Eq "$pattern" && return 0
+    for _ in $(seq 1 "$COMMAND_TIMEOUT"); do
+        tail -c +$((offset + 1)) "$health_log" 2>/dev/null |
+            grep -Eq 'There are [0-9]+ of a max of [0-9]+ players online:' && return 0
         kill -0 "$pid" 2>/dev/null || return 1
         sleep 1
     done
@@ -170,28 +176,27 @@ start_server() {
     cleanup_server
     stamp="$(date +%Y%m%d-%H%M%S)"
     SERVER_LOG="$LOG_DIR/server-$stamp.log"
+    SERVER_HEALTH_LOG="$RUN/server.health"
     fifo="$RUN/server.stdin"
     rm -f "$fifo"
-    mkfifo "$fifo"
+    mkfifo -m 660 "$fifo"
     exec {fd}<>"$fifo"
-    health_log="$RUN/server.health"
-    : > "$health_log"
+    : > "$SERVER_HEALTH_LOG"
 
     report "starting Minecraft"
-    bash "$START" <&"$fd" > >(filter_server_output "$SERVER_LOG" "$health_log") 2>&1 &
+    bash "$START" <&"$fd" > >(filter_server_output "$SERVER_LOG" "$SERVER_HEALTH_LOG") 2>&1 &
     SERVER_PID=$!
     SERVER_FD="$fd"
     SERVER_FIFO="$fifo"
-    SERVER_HEALTH_LOG="$health_log"
 
     if ! wait_for_log "$SERVER_PID" "$SERVER_LOG" 'Done \(' "$START_TIMEOUT"; then
-        report "startup health check failed"
+        report "startup failed"
         force_stop_server
         return 1
     fi
 
-    if ! command_ok "$SERVER_PID" "$SERVER_FD" "$SERVER_HEALTH_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
-        report "startup command health check failed"
+    if ! health_check "$SERVER_PID" "$SERVER_FD" "$SERVER_HEALTH_LOG"; then
+        report "startup health check failed"
         force_stop_server
         return 1
     fi
@@ -249,14 +254,18 @@ validate_backup() {
     probe="$RUN/probe"
     log="$LOG_DIR/backup-test-$stamp.log"
     fifo="$RUN/probe.stdin"
-    rm -f "$fifo"
-    mkfifo "$fifo"
-    exec {fd}<>"$fifo"
     health_log="$RUN/probe.health"
+
+    rm -f "$fifo"
+    mkfifo -m 660 "$fifo"
+    exec {fd}<>"$fifo"
     : > "$health_log"
 
-    MINECERA_ROOT="$probe" MINECERA_JAR="$probe/paper-26.2.jar" MINECERA_XMS="$PROBE_XMS" MINECERA_XMX="$PROBE_XMX" \
-        bash "$START" <&"$fd" > >(filter_server_output "$log" "$health_log") 2>&1 &
+    MINECERA_ROOT="$probe" \
+    MINECERA_JAR="$probe/paper-26.2.jar" \
+    MINECERA_XMS="$PROBE_XMS" \
+    MINECERA_XMX="$PROBE_XMX" \
+    bash "$START" <&"$fd" > >(filter_server_output "$log" "$health_log") 2>&1 &
     pid=$!
 
     if ! wait_for_log "$pid" "$log" 'Done \(' "$START_TIMEOUT"; then
@@ -268,7 +277,7 @@ validate_backup() {
         return 1
     fi
 
-    if ! command_ok "$pid" "$fd" "$health_log" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
+    if ! health_check "$pid" "$fd" "$health_log"; then
         report "backup failed command validation"
         kill -KILL "$pid" 2>/dev/null || true
         close_fd "$fd"
@@ -292,10 +301,11 @@ validate_backup() {
 
 create_backup() {
     local date stamp candidate offset saved
-    date="$(date +%F)"
-    stamp="$(date +%Y%m%d-%H%M%S)"
-    candidate="$BACKUPS/.candidate-$stamp"
 
+    [ "$DESIRED_STATE" = "$STATE_RUNNING" ] || {
+        report "backup rejected: server is stopped"
+        return 1
+    }
     [ -d "$WORLD" ] || {
         report "cannot create backup: world directory is missing"
         return 1
@@ -304,6 +314,10 @@ create_backup() {
         report "backup rejected: server is not running"
         return 1
     }
+
+    date="$(date +%F)"
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    candidate="$BACKUPS/.candidate-$stamp"
 
     report "flushing world to disk"
     offset=$(wc -c < "$SERVER_LOG" 2>/dev/null || printf '0')
@@ -322,17 +336,21 @@ create_backup() {
     }
 
     stop_server
+
     rm -rf -- "$candidate"
     mkdir -p "$candidate"
     report "copying world snapshot"
     if ! cp -a "$WORLD" "$candidate/world"; then
         rm -rf -- "$candidate"
         report "world snapshot copy failed"
+        start_server || report "server failed to restart after backup copy failure"
         return 1
     fi
 
     if ! validate_backup "$candidate"; then
         rm -rf -- "$candidate"
+        report "backup validation failed; candidate discarded"
+        start_server || report "server failed to restart after backup validation failure"
         return 1
     fi
 
@@ -343,6 +361,11 @@ create_backup() {
     printf '%s\n' "$date" > "$RUN/last-backup-date"
     prune_backups
     report "backup promoted healthy: $stamp"
+
+    start_server || {
+        report "backup succeeded but Minecraft failed to restart"
+        return 1
+    }
     return 0
 }
 
@@ -363,10 +386,12 @@ quarantine_world() {
 }
 
 restore_backup() {
-    local backup="$1" quarantine
+    local backup="$1"
+    local quarantine
 
     quarantine=$(quarantine_world) || return 1
     report "restoring backup: $(basename "$backup")"
+
     if ! cp -a "$backup/world" "$WORLD"; then
         rm -rf -- "$WORLD"
         mv "$quarantine" "$WORLD"
@@ -380,6 +405,7 @@ restore_backup() {
     fi
 
     report "restored world failed health verification"
+    force_stop_server
     rm -rf -- "$WORLD"
     mv "$quarantine" "$WORLD"
     return 1
@@ -387,8 +413,10 @@ restore_backup() {
 
 recover() {
     local backup
+
     report "entering recovery"
-    stop_server
+    force_stop_server
+
     while IFS= read -r backup; do
         [ -n "$backup" ] || continue
         if restore_backup "$backup"; then
@@ -396,6 +424,7 @@ recover() {
             return 0
         fi
     done < <(healthy_backup_dirs)
+
     report "recovery failed: no healthy backup could be started"
     return 1
 }
@@ -405,33 +434,37 @@ handle_command() {
 
     case "$command" in
         status)
-            if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+            if [ "$DESIRED_STATE" = "$STATE_STOPPED" ]; then
+                printf 'stopped\n'
+            elif [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
                 printf 'running pid=%s\n' "$SERVER_PID"
             else
-                printf 'stopped\n'
+                printf 'starting\n'
             fi
             ;;
         start)
+            DESIRED_STATE="$STATE_RUNNING"
             if [ -z "$SERVER_PID" ] || ! kill -0 "$SERVER_PID" 2>/dev/null; then
                 start_server || report "console start failed"
             else
-                report "console start rejected: server is already running"
+                report "console start ignored: server is already running"
             fi
             ;;
         stop)
+            DESIRED_STATE="$STATE_STOPPED"
             report "console requested stop"
             stop_server
             ;;
         restart)
+            DESIRED_STATE="$STATE_RUNNING"
             report "console requested restart"
             stop_server
             start_server || report "console restart failed"
             ;;
         backup)
-            if create_backup; then
-                start_server || report "server failed after console backup"
-            else
-                start_server || report "server failed after console backup attempt"
+            DESIRED_STATE="$STATE_RUNNING"
+            if ! create_backup; then
+                report "console backup failed"
             fi
             ;;
         save)
@@ -458,13 +491,13 @@ poll_control() {
 monitor_server() {
     local elapsed=0
 
-    while true; do
+    while [ "$DESIRED_STATE" = "$STATE_RUNNING" ]; do
         poll_control
+        [ "$DESIRED_STATE" = "$STATE_RUNNING" ] || return 0
 
         if [ -z "$SERVER_PID" ]; then
-            return 2
+            return 1
         fi
-
         if ! kill -0 "$SERVER_PID" 2>/dev/null; then
             report "Minecraft exited unexpectedly"
             cleanup_server
@@ -472,32 +505,22 @@ monitor_server() {
         fi
 
         elapsed=$((elapsed + 1))
-        if [ "$elapsed" -ge "$COMMAND_TIMEOUT" ]; then
+        if [ "$elapsed" -ge "$MONITOR_INTERVAL" ]; then
             elapsed=0
-            if ! command_ok "$SERVER_PID" "$SERVER_FD" "$SERVER_HEALTH_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
+            if ! health_check "$SERVER_PID" "$SERVER_FD" "$SERVER_HEALTH_LOG"; then
                 report "hang detected: Minecraft did not answer a main-thread command"
                 force_stop_server
                 return 1
             fi
-        fi
 
-        if backup_due; then
-            report "daily backup due"
-            if create_backup; then
-                if ! start_server; then
-                    report "server failed after backup cycle"
-                    return 1
-                fi
-            else
-                report "daily backup failed; current world was not replaced"
-                if [ -z "$SERVER_PID" ]; then
-                    start_server || return 1
-                fi
+            if backup_due; then
+                report "daily backup due"
+                create_backup || report "daily backup failed"
             fi
         fi
-
-        sleep "$MONITOR_INTERVAL"
+        sleep "$POLL_INTERVAL"
     done
+    return 0
 }
 
 main() {
@@ -508,6 +531,11 @@ main() {
 
     while true; do
         poll_control
+
+        if [ "$DESIRED_STATE" = "$STATE_STOPPED" ]; then
+            sleep "$POLL_INTERVAL"
+            continue
+        fi
 
         if [ -z "$SERVER_PID" ] || ! kill -0 "$SERVER_PID" 2>/dev/null; then
             if ! start_server; then
@@ -520,9 +548,9 @@ main() {
 
         monitor_server
         case "$?" in
-            0|2)
-                ;;
+            0) ;;
             1)
+                [ "$DESIRED_STATE" = "$STATE_RUNNING" ] || continue
                 recover || exit 1
                 ;;
         esac
