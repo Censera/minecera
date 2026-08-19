@@ -6,6 +6,7 @@ Requires=minecera.service
 [Service]
 Type=simple
 User=censera
+SupplementaryGroups=systemd-journal
 WorkingDirectory=/home/censera/minecraft
 Environment=MINECERA_ROOT=/home/censera/minecraft
 ExecStart=/home/censera/minecraft/minecera-web
@@ -14,7 +15,7 @@ RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectHome=true
+ProtectHome=false
 ReadWritePaths=/home/censera/minecraft/run
 LimitNOFILE=4096
 
