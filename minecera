@@ -19,7 +19,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 server_pid() {
-    pgrep -f '^java .*paper-26\.2\.jar' | head -n1
+    pgrep -f '(^|/)java .*paper-26\.2\.jar' | head -n1
 }
 
 server_log() {
