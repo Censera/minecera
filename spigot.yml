@@ -2,13 +2,9 @@
 # As you can see, there's tons to configure. Some options may impact gameplay, so use
 # with caution, and make sure you know what each option does before configuring.
 #
-# If you need help with the configuration or have any questions related to Paper,
-# join us in their Discord or check the docs page.
+# If you need help with Paper, check the documentation or community resources.
 #
 # File Reference: https://docs.papermc.io/paper/reference/spigot-configuration/
-# Docs: https://docs.papermc.io/
-# Discord: https://discord.gg/papermc
-# Website: https://papermc.io/
 
 settings:
   debug: false
@@ -39,7 +35,7 @@ world-settings:
     below-zero-generation-in-existing-chunks: true
     merge-radius:
       item: 0.5
-      exp: -1.0
+      exp: 6000
     mob-spawn-range: 8
     item-despawn-rate: 6000
     arrow-despawn-rate: 1200
@@ -89,14 +85,16 @@ world-settings:
         animals-for: 100
         monsters-max-per-tick: 8
         monsters-every: 400
-        monsters-for: 100
         villagers-max-per-tick: 4
         villagers-every: 600
-        villagers-for: 100
-      villagers-work-immunity-after: 100
-      villagers-work-immunity-for: 20
-      villagers-active-for-panic: true
-      ignore-spectators: false
+        flying-monsters-max-per-tick: 8
+        flying-monsters-every: 200
+        flying-monsters-for: 100
+        villagers-work-immunity-after: 100
+        villagers-work-immunity-for: 20
+        villagers-active-for-panic: true
+        tick-inactive-villagers: true
+        ignore-spectators: false
     entity-tracking-range:
       players: 128
       animals: 96
@@ -149,7 +147,7 @@ messages:
   whitelist: You are not whitelisted on this server!
   unknown-command: Unknown command. Type "/help" for help.
   server-full: The server is full!
-  outdated-client: Outdated client! I'm still on {0}
+  outdated-client: Outdated client! Please use {0}
   outdated-server: Outdated server! I'm still on {0}
   restart: Server is restarting
 advancements:
