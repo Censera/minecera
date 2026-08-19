@@ -24,6 +24,7 @@ PROBE_XMX=1G
 STATE_RUNNING=running
 STATE_STOPPED=stopped
 DESIRED_STATE="$STATE_RUNNING"
+RECOVERY_ALLOWED=1
 SERVER_PID=""
 SERVER_FD=""
 SERVER_FIFO=""
@@ -58,10 +59,7 @@ cleanup_server() {
 
 force_stop_server() {
     local pid="$SERVER_PID"
-    [ -n "$pid" ] || {
-        cleanup_server
-        return 0
-    }
+    [ -n "$pid" ] || { cleanup_server; return 0; }
 
     if kill -0 "$pid" 2>/dev/null; then
         kill -KILL "$pid" 2>/dev/null || true
@@ -134,11 +132,7 @@ filter_server_output() {
 }
 
 wait_for_log() {
-    local pid="$1"
-    local log="$2"
-    local pattern="$3"
-    local timeout="$4"
-
+    local pid="$1" log="$2" pattern="$3" timeout="$4"
     for _ in $(seq 1 "$timeout"); do
         grep -Eq "$pattern" "$log" 2>/dev/null && return 0
         kill -0 "$pid" 2>/dev/null || return 1
@@ -148,11 +142,7 @@ wait_for_log() {
 }
 
 health_check() {
-    local pid="$1"
-    local fd="$2"
-    local health_log="$3"
-    local offset
-
+    local pid="$1" fd="$2" health_log="$3" offset
     offset=$(wc -c < "$health_log" 2>/dev/null || printf '0')
     printf '%s\n' "list" >&"$fd" 2>/dev/null || return 1
 
@@ -166,7 +156,7 @@ health_check() {
 }
 
 start_server() {
-    local stamp fifo fd health_log
+    local stamp fifo fd
 
     if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
         report "start rejected: Minecraft is already running"
@@ -228,16 +218,17 @@ prune_backups() {
 }
 
 prepare_probe() {
-    local backup="$1"
-    local probe="$RUN/probe"
+    local backup="$1" probe="$RUN/probe"
 
     rm -rf -- "$probe"
     mkdir -p "$probe"
-    cp -a "$ROOT/plugins" "$probe/plugins"
-    [ ! -d "$ROOT/config" ] || cp -a "$ROOT/config" "$probe/config"
-    cp -a "$ROOT/bukkit.yml" "$ROOT/commands.yml" "$ROOT/spigot.yml" "$ROOT/server.properties" "$ROOT/eula.txt" "$probe/"
-    cp "$JAR" "$probe/paper-26.2.jar"
-    cp -a "$backup/world" "$probe/world"
+    cp -a "$ROOT/plugins" "$probe/plugins" || return 1
+    if [ -d "$ROOT/config" ]; then
+        cp -a "$ROOT/config" "$probe/config" || return 1
+    fi
+    cp -a "$ROOT/bukkit.yml" "$ROOT/commands.yml" "$ROOT/spigot.yml" "$ROOT/server.properties" "$ROOT/eula.txt" "$probe/" || return 1
+    cp "$JAR" "$probe/paper-26.2.jar" || return 1
+    cp -a "$backup/world" "$probe/world" || return 1
 }
 
 validate_backup() {
@@ -362,10 +353,9 @@ create_backup() {
     prune_backups
     report "backup promoted healthy: $stamp"
 
-    start_server || {
+    if ! start_server; then
         report "backup succeeded but Minecraft failed to restart"
-        return 1
-    }
+    fi
     return 0
 }
 
@@ -386,8 +376,7 @@ quarantine_world() {
 }
 
 restore_backup() {
-    local backup="$1"
-    local quarantine
+    local backup="$1" quarantine
 
     quarantine=$(quarantine_world) || return 1
     report "restoring backup: $(basename "$backup")"
@@ -444,6 +433,7 @@ handle_command() {
             ;;
         start)
             DESIRED_STATE="$STATE_RUNNING"
+            RECOVERY_ALLOWED=1
             if [ -z "$SERVER_PID" ] || ! kill -0 "$SERVER_PID" 2>/dev/null; then
                 start_server || report "console start failed"
             else
@@ -457,9 +447,14 @@ handle_command() {
             ;;
         restart)
             DESIRED_STATE="$STATE_RUNNING"
+            RECOVERY_ALLOWED=0
             report "console requested restart"
             stop_server
-            start_server || report "console restart failed"
+            if start_server; then
+                report "Minecraft restarted without backup restore"
+            else
+                report "console restart failed; preserving current world and retrying"
+            fi
             ;;
         backup)
             DESIRED_STATE="$STATE_RUNNING"
@@ -539,10 +534,13 @@ main() {
 
         if [ -z "$SERVER_PID" ] || ! kill -0 "$SERVER_PID" 2>/dev/null; then
             if ! start_server; then
-                if ! recover; then
-                    exit 1
+                if [ "$RECOVERY_ALLOWED" -eq 1 ]; then
+                    recover || exit 1
+                else
+                    report "Minecraft failed to start; current world preserved"
                 fi
             fi
+            RECOVERY_ALLOWED=1
             continue
         fi
 
@@ -551,7 +549,12 @@ main() {
             0) ;;
             1)
                 [ "$DESIRED_STATE" = "$STATE_RUNNING" ] || continue
-                recover || exit 1
+                if [ "$RECOVERY_ALLOWED" -eq 1 ]; then
+                    recover || exit 1
+                else
+                    report "unexpected exit during restart cycle; current world preserved"
+                    RECOVERY_ALLOWED=1
+                fi
                 ;;
         esac
     done
