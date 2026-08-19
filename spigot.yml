@@ -20,7 +20,7 @@ settings:
   moved-wrongly-threshold: 0.0625
   moved-too-quickly-multiplier: 10.0
   timeout-time: 60
-  restart-on-crash: true
+  restart-on-crash: false
   restart-script: ./start.sh
   netty-threads: 4
   attribute:
@@ -121,7 +121,6 @@ world-settings:
     seed-swamp: 14357620
     seed-monument: 10387313
     seed-shipwreck: 165745295
-    seed-ocean: 14357621
     seed-outpost: 165745296
     seed-endcity: 10387313
     seed-slime: 987234911
@@ -154,13 +153,16 @@ messages:
   whitelist: You are not whitelisted on this server!
   unknown-command: Unknown command. Type "/help" for help.
   server-full: The server is full!
-  outdated-client: Outdated client! Please use {0}
+  outdated-client: Outdated client! I'm still on {0}
   outdated-server: Outdated server! I'm still on {0}
   restart: Server is restarting
 advancements:
   disable-saving: false
   disabled:
   - minecraft:story/disabled
+players:
+  disable-saving: false
+  stats: false
 players:
   disable-saving: false
 config-version: 13
