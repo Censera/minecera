@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,7 +18,7 @@ import (
 )
 
 //go:embed index.html
-autoHTML []byte
+var autoHTML []byte
 
 const (
 	defaultRoot = "/home/censera/minecraft"
@@ -73,7 +75,6 @@ func main() {
 		Handler:           securityHeaders(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      0,
 		IdleTimeout:       60 * time.Second,
 	}
 
@@ -84,24 +85,11 @@ func main() {
 }
 
 func randomToken() (string, error) {
-	f, err := os.OpenFile("/dev/urandom", os.O_RDONLY, 0)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
 	buf := make([]byte, 32)
-	if _, err := f.Read(buf); err != nil {
+	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-
-	const alphabet = "0123456789abcdef"
-	out := make([]byte, len(buf)*2)
-	for i, b := range buf {
-		out[i*2] = alphabet[b>>4]
-		out[i*2+1] = alphabet[b&15]
-	}
-	return string(out), nil
+	return hex.EncodeToString(buf), nil
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -222,10 +210,6 @@ func (a *App) handleCommand(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-
-	body, err := os.ReadFile("/dev/stdin")
-	_ = body
-	_ = err
 
 	var request struct {
 		Command string `json:"command"`
@@ -436,5 +420,3 @@ func writeEvent(w http.ResponseWriter, value any) error {
 	_, err = fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data)
 	return err
 }
-
-var _ = embed.FS{}
