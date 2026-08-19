@@ -5,15 +5,39 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Minecera</title>
 <style>
-:root {
-  color-scheme: dark;
-  --bg:#090b0e;
-  --surface:#0e1116;
-  --surface-2:#12161c;
-  --line:#20262e;
-  --line-strong:#2b333d;
-  --text:#dfe4ea;
-  --muted:#7d8793;
-  --dim:#56616e;
-  --green:#9ece6a;
-  --yellow:#e
+:root{color-scheme:dark;--bg:#090b0e;--panel:#0e1116;--panel2:#12161c;--line:#20262e;--line2:#303944;--text:#dfe4ea;--muted:#7d8793;--dim:#59636f;--green:#9ece6a;--yellow:#e0af68;--red:#f7768e;--blue:#7aa2f7;--mono:Iosevka,'JetBrains Mono','Cascadia Mono','SFMono-Regular',Consolas,monospace}
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden}body{background:var(--bg);color:var(--text);font:13px var(--mono);display:flex;justify-content:center}.app{width:min(1500px,100%);height:100%;display:grid;grid-template-rows:auto auto 1fr auto;padding:14px 18px 16px;gap:10px}.top{display:flex;align-items:center;justify-content:space-between;min-height:34px}.brand{font-weight:650;letter-spacing:-.02em}.state{display:flex;align-items:center;gap:8px;color:var(--muted)}.dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}.dot.up{background:var(--green);box-shadow:0 0 10px #9ece6a66}.dot.warn{background:var(--yellow)}.dot.down{background:var(--red)}.metrics{display:grid;grid-template-columns:repeat(6,1fr);border:1px solid var(--line);background:var(--panel);border-radius:7px;overflow:hidden}.metric{padding:9px 11px;border-right:1px solid var(--line);min-width:0}.metric:last-child{border:0}.label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin-bottom:4px}.value{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.main{min-height:0;display:flex;flex-direction:column;border:1px solid var(--line);background:#080a0d;border-radius:7px;overflow:hidden}.logbar{height:34px;flex:none;display:flex;align-items:center;padding:0 11px;border-bottom:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:11px}.logs{min-height:0;flex:1;overflow:auto;padding:8px 11px;font-size:11px;line-height:1.45;white-space:pre;tab-size:4;scrollbar-width:thin}.logs .line{min-height:1.45em}.logs .info{color:#b7c0cb}.logs .ok{color:var(--green)}.logs .warn{color:var(--yellow)}.logs .error{color:var(--red)}.empty{color:var(--dim);padding-top:4px}.inputbar{height:42px;flex:none;border-top:1px solid var(--line);background:var(--panel);display:flex;align-items:center;padding:0 11px;gap:9px}.prompt{color:var(--green);user-select:none}.command{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--text);font:12px var(--mono);caret-color:var(--green)}.command::placeholder{color:var(--dim)}.send{border:1px solid var(--line2);background:var(--panel2);color:var(--muted);border-radius:4px;padding:5px 9px;font:11px var(--mono);cursor:pointer}.send:hover{color:var(--text);border-color:#48525e}.send:disabled{opacity:.4;cursor:default}.actions{display:flex;gap:6px}.actions button{border:1px solid var(--line);background:var(--panel);color:var(--muted);border-radius:4px;padding:5px 9px;font:11px var(--mono);cursor:pointer}.actions button:hover{color:var(--text);border-color:var(--line2)}@media(max-width:800px){.app{padding:10px;gap:8px}.metrics{grid-template-columns:repeat(3,1fr)}.metric:nth-child(3){border-right:0}.metric:nth-child(-n+3){border-bottom:1px solid var(--line)}.logs{font-size:10px}.actions{display:none}}
+</style>
+</head>
+<body>
+<div class="app">
+<header class="top"><div class="brand">minecera</div><div class="state"><span id="dot" class="dot"></span><span id="state">connecting</span></div></header>
+<section class="metrics">
+<div class="metric"><div class="label">Uptime</div><div class="value" id="uptime">--</div></div>
+<div class="metric"><div class="label">CPU</div><div class="value" id="cpu">--</div></div>
+<div class="metric"><div class="label">Memory</div><div class="value" id="memory">--</div></div>
+<div class="metric"><div class="label">Load</div><div class="value" id="load">--</div></div>
+<div class="metric"><div class="label">Disk</div><div class="value" id="disk">--</div></div>
+<div class="metric"><div class="label">Backup</div><div class="value" id="backup">--</div></div>
+</section>
+<main class="main">
+<div class="logbar"><span>server log</span><span style="margin-left:auto" id="event">waiting</span></div>
+<div class="logs" id="logs"><div class="empty">waiting for server output...</div></div>
+<div class="inputbar"><span class="prompt">›</span><input id="command" class="command" autocomplete="off" spellcheck="false" placeholder="enter a Minecraft command"><button id="send" class="send">send</button></div>
+</main>
+<footer class="actions"><button data-action="save">save</button><button data-action="restart">restart</button><button data-action="stop">stop</button><button data-action="start">start</button><button data-action="backup">backup</button><span style="flex:1"></span><span id="updated" style="color:var(--dim);align-self:center">--</span></footer>
+</div>
+<script>
+const $=id=>document.getElementById(id);const logs=$('logs');let stick=true;
+logs.addEventListener('scroll',()=>{stick=logs.scrollHeight-logs.scrollTop-logs.clientHeight<24});
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+function renderLogs(lines){const atBottom=stick;logs.innerHTML=lines.length?lines.map(x=>{let c='info';if(/error|exception|failed|fatal/i.test(x))c='error';else if(/warn/i.test(x))c='warn';else if(/healthy|started|stopped|saved|done/i.test(x))c='ok';return '<div class="line '+c+'">'+esc(x)+'</div>'}).join(''):'<div class="empty">no log output</div>';if(atBottom)logs.scrollTop=logs.scrollHeight}
+function renderStatus(s){$('state').textContent=s.state||'unknown';$('dot').className='dot '+((s.state||'').toLowerCase().includes('running')?'up':(s.state||'').toLowerCase().includes('stop')?'down':'warn');$('uptime').textContent=s.uptime||'--';$('cpu').textContent=s.cpu||'--';$('memory').textContent=s.memory||'--';$('load').textContent=s.load||'--';$('disk').textContent=s.disk||'--';$('backup').textContent=s.lastBackup||((s.backups??'--')+' backups');$('updated').textContent=s.updated||'--';$('event').textContent=s.journalEvent||'live'}
+function apply(data){if(data.status)renderStatus(data.status);if(Array.isArray(data.logs))renderLogs(data.logs)}
+async function command(){const input=$('command');const value=input.value.trim();if(!value)return;$('send').disabled=true;try{const r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:value})});if(!r.ok)throw new Error(await r.text());input.value='';}catch(e){$('event').textContent='command failed';console.error(e)}finally{$('send').disabled=false;input.focus()}}
+$('send').onclick=command;$('command').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();command()}});
+document.querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:b.dataset.action})})}finally{b.disabled=false;$('command').focus()}});
+function connect(){const es=new EventSource('/api/events');es.onmessage=e=>{try{apply(JSON.parse(e.data))}catch(err){console.error(err)}};es.onerror=()=>{es.close();$('state').textContent='disconnected';$('dot').className='dot down';setTimeout(connect,2000)}}connect();$('command').focus();
+</script>
+</body>
+</html>
