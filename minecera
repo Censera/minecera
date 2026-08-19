@@ -6,9 +6,11 @@ CONTROL="$ROOT/run/control"
 SERVER_INPUT="$ROOT/run/server.stdin"
 LOG_LINES=14
 FRAME=0.25
+REFRESH=5
 RUNNING=1
 INPUT=""
 MESSAGE=""
+LAST_RENDER=0
 
 cleanup() {
     stty sane 2>/dev/null || true
@@ -153,7 +155,11 @@ stty -icanon -echo min 0 time 1
 printf '\033[?1049h\033[?25l'
 
 while [ "$RUNNING" -eq 1 ]; do
-    render
+    now=$(date +%s)
+    if [ $((now - LAST_RENDER)) -ge "$REFRESH" ]; then
+        render
+        LAST_RENDER=$now
+    fi
 
     if IFS= read -r -N1 -t "$FRAME" char; then
         case "$char" in
@@ -161,13 +167,14 @@ while [ "$RUNNING" -eq 1 ]; do
                 command="$INPUT"
                 INPUT=""
                 run_command "$command"
+                render
+                LAST_RENDER=$(date +%s)
                 ;;
             $'\177'|$'\b')
                 INPUT="${INPUT%?}"
                 ;;
             $'\003')
                 INPUT=""
-                MESSAGE='input cleared'
                 ;;
             $'\004')
                 RUNNING=0
