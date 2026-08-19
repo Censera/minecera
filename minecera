@@ -2,12 +2,11 @@
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONTROL="$ROOT/run/control"
+SERVER_INPUT="$ROOT/run/server.stdin"
 SUPERVISOR_LOG="$ROOT/logs/supervisor.log"
 LOG_LINES=12
 RUNNING=1
 INPUT=""
-LAST_RENDER=0
 
 cleanup() {
     stty sane 2>/dev/null || true
@@ -16,7 +15,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 is_running() {
-    [ -p "$CONTROL" ]
+    [ -p "$SERVER_INPUT" ]
 }
 
 server_pid() {
@@ -40,8 +39,8 @@ value_or_dash() {
 }
 
 render() {
-    local pid log cpu mem uptime load disk backups newest supervisor lines
-    local rows cols
+    local pid log cpu mem uptime load disk backups newest supervisor
+    local rows cols used
 
     rows=$(tput lines 2>/dev/null || printf '24')
     cols=$(tput cols 2>/dev/null || printf '80')
@@ -79,12 +78,12 @@ render() {
     printf ' LOG\n'
 
     if [ -n "$log" ] && [ -f "$log" ]; then
-        tail -n "$LOG_LINES" "$log" | sed "s/\r//g" | cut -c1-$((cols - 1))
+        tail -n "$LOG_LINES" "$log" | sed 's/\r//g' | cut -c1-$((cols - 1))
     else
         printf ' no Minecraft log yet\n'
     fi
 
-    local used=$((rows - LOG_LINES - 9))
+    used=$((rows - LOG_LINES - 9))
     [ "$used" -lt 1 ] && used=1
     printf '%*s\n' "$used" ''
     printf ' %s' '> '
@@ -92,10 +91,19 @@ render() {
     printf '\033[?25l'
 }
 
-send() {
+send_minecraft() {
     local command="$1"
-    is_running || return 1
-    timeout 1 bash -c 'printf "%s\n" "$1" > "$2"' _ "$command" "$CONTROL" 2>/dev/null
+
+    if ! is_running; then
+        INPUT='server stdin is unavailable'
+        return 1
+    fi
+
+    printf '%s\n' "$command" > "$SERVER_INPUT"
+}
+
+show_help() {
+    INPUT='help: status save reload backup restart stop start exit'
 }
 
 run_command() {
@@ -106,17 +114,22 @@ run_command() {
     case "$command" in
         exit|quit)
             RUNNING=0
-            return
-            ;;
-        clear)
-            return
             ;;
         help)
-            send "help"
+            show_help
+            ;;
+        status)
+            if [ -n "$(server_pid)" ]; then
+                INPUT="server running pid=$(server_pid)"
+            else
+                INPUT='server offline'
+            fi
+            ;;
+        backup|restart|stop|start)
+            INPUT="$command is a supervisor operation"
             ;;
         *)
-            if ! send "$command"; then
-                INPUT='supervisor is not running'
+            if ! send_minecraft "$command"; then
                 sleep 1
             fi
             ;;
@@ -153,5 +166,4 @@ while [ "$RUNNING" -eq 1 ]; do
                 ;;
         esac
     fi
-
 done
