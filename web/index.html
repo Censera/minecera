@@ -38,7 +38,7 @@ function apply(data){if(data.status)renderStatus(data.status);if(Array.isArray(d
 async function command(){const input=$('command');const value=input.value.trim();if(!value)return;$('send').disabled=true;try{const r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:value})});if(!r.ok)throw new Error(await r.text());input.value='';}catch(e){$('event').textContent='command failed';console.error(e)}finally{$('send').disabled=false;input.focus()}}
 $('command-form').addEventListener('submit',e=>{e.preventDefault();command()});
 document.querySelectorAll('[data-action]').forEach(b=>b.onclick=async()=>{b.disabled=true;try{const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:b.dataset.action})});if(!r.ok)throw new Error(await r.text())}catch(e){$('event').textContent='control failed';console.error(e)}finally{b.disabled=false;$('command').focus()}});
-function connect(){const es=new EventSource('/api/events');es.onmessage=e=>{try{apply(JSON.parse(e.data))}catch(err){console.error(err)}};es.onerror=()=>{es.close();$('state').textContent='disconnected';$('dot').className='dot down';setTimeout(connect,2000)}}connect();$('command').focus();
+function connect(){const es=new EventSource('/api/events');es.addEventListener('snapshot',e=>{try{apply(JSON.parse(e.data))}catch(err){console.error(err)}});es.onerror=()=>{es.close();$('state').textContent='disconnected';$('dot').className='dot down';setTimeout(connect,2000)}}connect();$('command').focus();
 </script>
 </body>
 </html>
