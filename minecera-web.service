@@ -1,0 +1,22 @@
+[Unit]
+Description=Minecera Web Control
+After=minecera.service
+Requires=minecera.service
+
+[Service]
+Type=simple
+User=censera
+WorkingDirectory=/home/censera/minecraft
+Environment=MINECERA_ROOT=/home/censera/minecraft
+ExecStart=/home/censera/minecraft/minecera-web
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/home/censera/minecraft/run
+LimitNOFILE=4096
+
+[Install]
+WantedBy=multi-user.target
