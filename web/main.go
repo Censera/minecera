@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ var autoHTML []byte
 const (
 	defaultRoot = "/home/censera/minecraft"
 	listenAddr  = "127.0.0.1:8080"
+	statusEvery = 5
 )
 
 type App struct {
@@ -154,18 +156,33 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 
-	ticker := time.NewTicker(5 * time.Second)
+	status := a.status()
+	logs := a.logs(160)
+
+	if err := writeEvent(w, Snapshot{Status: status, Logs: logs}); err != nil {
+		return
+	}
+	flusher.Flush()
+
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
+	counter := 0
 	for {
-		if err := writeEvent(w, a.snapshot(true)); err != nil {
-			return
-		}
-		flusher.Flush()
-
 		select {
 		case <-ticker.C:
+			counter++
+			logs = a.logs(160)
+			if counter >= statusEvery {
+				status = a.status()
+				counter = 0
+			}
+			if err := writeEvent(w, Snapshot{Status: status, Logs: logs}); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-r.Context().Done():
 			return
 		}
@@ -383,20 +400,25 @@ func latestJournalEvent() string {
 }
 
 func (a *App) logs(lines int) []string {
-	out, err := exec.Command("journalctl", "-u", "minecera.service", "-n", strconv.Itoa(lines), "-o", "cat", "--no-pager").Output()
-	if err == nil {
-		return splitLines(string(out))
-	}
-
 	files, _ := filepath.Glob(filepath.Join(a.root, "logs", "server-*.log"))
 	if len(files) == 0 {
-		return []string{"journalctl unavailable and no server log exists"}
+		return []string{"no Minecraft server log exists"}
 	}
-	latest := files[len(files)-1]
-	data, err := os.ReadFile(latest)
+
+	sort.Slice(files, func(i, j int) bool {
+		aInfo, aErr := os.Stat(files[i])
+		bInfo, bErr := os.Stat(files[j])
+		if aErr != nil || bErr != nil {
+			return files[i] > files[j]
+		}
+		return aInfo.ModTime().After(bInfo.ModTime())
+	})
+
+	data, err := os.ReadFile(files[0])
 	if err != nil {
-		return []string{"cannot read server log: " + err.Error()}
+		return []string{"cannot read Minecraft log: " + err.Error()}
 	}
+
 	all := splitLines(string(data))
 	if len(all) > lines {
 		all = all[len(all)-lines:]
