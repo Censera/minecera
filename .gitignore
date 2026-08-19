@@ -3,10 +3,16 @@ paper-*.jar
 versions/
 cache/
 libraries/
+.paper/
 
 # Runtime
 logs/
 debug/
+crash-reports/
+
+# Supervisor runtime state
+backups/
+run/
 
 # Player and server state
 banned-ips.json
