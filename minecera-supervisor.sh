@@ -130,10 +130,11 @@ start_process() {
     local cwd="$2"
     local log="$3"
     local fifo="$4"
+    local fd
 
     rm -f "$fifo"
     mkfifo "$fifo"
-    exec {fd}<->"$fifo"
+    exec {fd}<>"$fifo"
 
     if [ "$mode" = "real" ]; then
         bash "$START" <&"$fd" >"$log" 2>&1 &
@@ -195,12 +196,6 @@ stop_server() {
     sleep 5
     kill -KILL "$SERVER_PID" 2>/dev/null || true
     cleanup_server
-}
-
-send_command() {
-    local command="$1"
-    [ -n "$SERVER_FD" ] || return 1
-    printf '%s\n' "$command" >&"$SERVER_FD"
 }
 
 healthy_backup_dirs() {
@@ -267,6 +262,11 @@ validate_backup() {
     rm -rf -- "$probe"
     report "backup validated healthy"
     return 0
+}
+
+send_command() {
+    [ -n "$SERVER_FD" ] || return 1
+    printf '%s\n' "$1" >&"$SERVER_FD"
 }
 
 create_backup() {
@@ -379,43 +379,46 @@ recover() {
 
 handle_control() {
     local command
-    while IFS= read -r command; do
-        [ -z "$command" ] && continue
-        case "$command" in
-            status)
-                if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-                    printf 'running pid=%s\n' "$SERVER_PID"
-                else
-                    printf 'stopped\n'
-                fi
-                ;;
-            stop)
-                report "console requested stop"
-                stop_server
-                ;;
-            restart)
-                report "console requested restart"
-                stop_server
-                ;;
-            backup)
-                if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
-                    create_backup || report "console backup failed"
-                    start_server || report "server failed after console backup"
-                else
-                    report "console backup rejected: server is not running"
-                fi
-                ;;
-            save)
-                send_command "save-all flush" || report "console save failed: server is not running"
-                ;;
-            reload)
-                send_command "reload confirm" || report "console reload failed: server is not running"
-                ;;
-            *)
-                send_command "$command" || report "console command rejected: server is not running"
-                ;;
-        esac
-    done < "$CONTROL"
+    while true; do
+        while IFS= read -r command; do
+            [ -z "$command" ] && continue
+            case "$command" in
+                status)
+                    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+                        printf 'running pid=%s\n' "$SERVER_PID"
+                    else
+                        printf 'stopped\n'
+                    fi
+                    ;;
+                stop)
+                    report "console requested stop"
+                    stop_server
+                    ;;
+                restart)
+                    report "console requested restart"
+                    stop_server
+                    ;;
+                backup)
+                    if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+                        create_backup || report "console backup failed"
+                        start_server || report "server failed after console backup"
+                    else
+                        report "console backup rejected: server is not running"
+                    fi
+                    ;;
+                save)
+                    send_command "save-all flush" || report "console save failed: server is not running"
+                    ;;
+                reload)
+                    send_command "reload confirm" || report "console reload failed: server is not running"
+                    ;;
+                *)
+                    send_command "$command" || report "console command rejected: server is not running"
+                    ;;
+            esac
+        done < "$CONTROL"
+        sleep 0.1
+    done
 }
 
 monitor() {
