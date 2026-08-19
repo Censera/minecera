@@ -435,6 +435,17 @@ func splitLines(s string) []string {
 	return lines
 }
 
+func filterProbeLines(lines []string) []string {
+	filtered := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, "There are ") && strings.Contains(line, " of a max of ") && strings.Contains(line, " players online:") {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+	return filtered
+}
+
 func writeJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(value)
