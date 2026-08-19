@@ -46,3 +46,6 @@ plugins/spark/tmp/
 
 # GuestMode account database
 plugins/GuestMode/accounts.yml
+
+# Minecera web credentials
+run/web.credentials
