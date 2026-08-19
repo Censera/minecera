@@ -26,12 +26,13 @@ const (
 	defaultRoot = "/home/censera/minecraft"
 	listenAddr  = "127.0.0.1:8080"
 	statusEvery = 5
+	webUser     = "censera"
 )
 
 type App struct {
-	root  string
-	token string
-	mu    sync.Mutex
+	root     string
+	password string
+	mu       sync.Mutex
 }
 
 type Status struct {
@@ -59,12 +60,12 @@ func main() {
 		root = defaultRoot
 	}
 
-	token, err := randomToken()
+	password, err := loadOrCreatePassword(filepath.Join(root, "run", "web.credentials"))
 	if err != nil {
 		panic(err)
 	}
 
-	app := &App{root: root, token: token}
+	app := &App{root: root, password: password}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
 	mux.HandleFunc("/api/status", app.handleStatus)
@@ -75,24 +76,40 @@ func main() {
 
 	server := &http.Server{
 		Addr:              listenAddr,
-		Handler:           securityHeaders(mux),
+		Handler:           securityHeaders(basicAuth(webUser, password, mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 
 	fmt.Printf("Minecera web listening on http://%s\n", listenAddr)
+	fmt.Printf("Minecera web credentials: %s\n", filepath.Join(root, "run", "web.credentials"))
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		panic(err)
 	}
 }
 
-func randomToken() (string, error) {
+func loadOrCreatePassword(path string) (string, error) {
+	if data, err := os.ReadFile(path); err == nil {
+		password := strings.TrimSpace(string(data))
+		if password != "" {
+			return password, nil
+		}
+	}
+
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return hex.EncodeToString(buf), nil
+	password := hex.EncodeToString(buf)
+
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, []byte(password+"\n"), 0600); err != nil {
+		return "", err
+	}
+	return password, nil
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -105,26 +122,25 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
+func basicAuth(user, password string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPassword, ok := r.BasicAuth()
+		if !ok || gotUser != user || gotPassword != password {
+			w.Header().Set("WWW-Authenticate", `Basic realm="Minecera"`)
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "minecera_session",
-		Value:    a.token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(autoHTML)
-}
-
-func (a *App) authorized(r *http.Request) bool {
-	cookie, err := r.Cookie("minecera_session")
-	return err == nil && cookie.Value == a.token
 }
 
 func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -142,11 +158,6 @@ func (a *App) handleLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
-	if !a.authorized(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return
-	}
-
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -160,7 +171,6 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	status := a.status()
 	logs := a.logs(160)
-
 	if err := writeEvent(w, Snapshot{Status: status, Logs: logs}); err != nil {
 		return
 	}
@@ -168,7 +178,6 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-
 	counter := 0
 	for {
 		select {
@@ -190,32 +199,21 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleControl(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || !a.authorized(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var body struct {
-		Action string `json:"action"`
-	}
+	var body struct { Action string `json:"action"` }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-
-	allowed := map[string]bool{
-		"start": true,
-		"stop": true,
-		"restart": true,
-		"backup": true,
-		"save": true,
-		"reload": true,
-	}
+	allowed := map[string]bool{"start": true, "stop": true, "restart": true, "backup": true, "save": true, "reload": true}
 	if !allowed[body.Action] {
 		http.Error(w, "invalid action", http.StatusBadRequest)
 		return
 	}
-
 	if err := a.sendControl(body.Action); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -224,25 +222,21 @@ func (a *App) handleControl(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleCommand(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || !a.authorized(r) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	var request struct {
-		Command string `json:"command"`
-	}
+	var request struct { Command string `json:"command"` }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&request); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-
 	request.Command = strings.TrimSpace(request.Command)
 	if request.Command == "" || strings.ContainsAny(request.Command, "\r\n") {
 		http.Error(w, "invalid command", http.StatusBadRequest)
 		return
 	}
-
 	if err := a.sendMinecraft(request.Command); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
@@ -270,7 +264,7 @@ func writeFIFO(path, value string) error {
 	f := os.NewFile(uintptr(fd), path)
 	if f == nil {
 		_ = syscall.Close(fd)
-		return fmt.Errorf("open control channel: invalid file")
+		return errors.New("open control channel: invalid file")
 	}
 	defer f.Close()
 	if _, err := fmt.Fprintln(f, value); err != nil {
@@ -290,78 +284,48 @@ func (a *App) snapshot(includeLogs bool) Snapshot {
 
 func (a *App) status() Status {
 	pid := findServerPID()
-	status := Status{
-		State:   "offline",
-		PID:     pid,
-		Load:    readLoad(),
-		Disk:    diskUsage(a.root),
-		Backups: backupCount(a.root),
-		Updated: time.Now().Format(time.RFC3339),
-	}
-
+	status := Status{State: "offline", PID: pid, Load: readLoad(), Disk: diskUsage(a.root), Backups: backupCount(a.root), Updated: time.Now().Format(time.RFC3339)}
 	status.LastBackup = latestBackup(a.root)
 	status.JournalEvent = latestJournalEvent()
-
-	if pid == 0 {
-		return status
-	}
-
+	if pid == 0 { return status }
 	status.State = "running"
 	status.Uptime, status.CPU, status.Memory = processStats(pid)
 	return status
 }
 
 func findServerPID() int {
-	out, err := exec.Command("pgrep", "-f", `^java .*paper-26\.2\.jar`).Output()
-	if err != nil {
-		return 0
-	}
+	out, err := exec.Command("pgrep", "-f", `(^|/)java .*paper-26\.2\.jar`).Output()
+	if err != nil { return 0 }
 	for _, line := range strings.Fields(string(out)) {
-		if pid, err := strconv.Atoi(line); err == nil {
-			return pid
-		}
+		if pid, err := strconv.Atoi(line); err == nil { return pid }
 	}
 	return 0
 }
 
 func processStats(pid int) (string, string, string) {
 	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "etime=,%cpu=,rss=").Output()
-	if err != nil {
-		return "-", "-", "-"
-	}
+	if err != nil { return "-", "-", "-" }
 	fields := strings.Fields(string(out))
-	if len(fields) < 3 {
-		return "-", "-", "-"
-	}
+	if len(fields) < 3 { return "-", "-", "-" }
 	rss, _ := strconv.ParseFloat(fields[2], 64)
 	return fields[0], fields[1] + "%", fmt.Sprintf("%.1fG", rss/1024/1024)
 }
 
 func readLoad() string {
 	data, err := os.ReadFile("/proc/loadavg")
-	if err != nil {
-		return "-"
-	}
+	if err != nil { return "-" }
 	fields := strings.Fields(string(data))
-	if len(fields) < 3 {
-		return "-"
-	}
+	if len(fields) < 3 { return "-" }
 	return strings.Join(fields[:3], " ")
 }
 
 func diskUsage(root string) string {
 	out, err := exec.Command("df", "-h", root).Output()
-	if err != nil {
-		return "-"
-	}
+	if err != nil { return "-" }
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) < 2 {
-		return "-"
-	}
+	if len(lines) < 2 { return "-" }
 	fields := strings.Fields(lines[len(lines)-1])
-	if len(fields) < 5 {
-		return "-"
-	}
+	if len(fields) < 5 { return "-" }
 	return fmt.Sprintf("%s/%s (%s)", fields[2], fields[1], fields[4])
 }
 
@@ -372,78 +336,48 @@ func backupCount(root string) int {
 
 func latestBackup(root string) string {
 	entries, err := os.ReadDir(filepath.Join(root, "backups"))
-	if err != nil {
-		return "-"
-	}
-
+	if err != nil { return "-" }
 	best := ""
 	for _, entry := range entries {
-		if !entry.IsDir() || best >= entry.Name() {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(root, "backups", entry.Name(), "HEALTHY")); err == nil {
-			best = entry.Name()
-		}
+		if !entry.IsDir() || best >= entry.Name() { continue }
+		if _, err := os.Stat(filepath.Join(root, "backups", entry.Name(), "HEALTHY")); err == nil { best = entry.Name() }
 	}
-	if best == "" {
-		return "-"
-	}
+	if best == "" { return "-" }
 	return best
 }
 
 func latestJournalEvent() string {
 	out, err := exec.Command("journalctl", "-u", "minecera.service", "-n", "1", "-o", "cat", "--no-pager").Output()
-	if err != nil {
-		return "journal unavailable"
-	}
+	if err != nil { return "journal unavailable" }
 	return strings.TrimSpace(string(out))
 }
 
 func (a *App) logs(lines int) []string {
 	files, _ := filepath.Glob(filepath.Join(a.root, "logs", "server-*.log"))
-	if len(files) == 0 {
-		return []string{"no Minecraft server log exists"}
+	if len(files) == 0 { return []string{"no Minecraft server log exists"} }
+
+	type logFile struct { path string; mod time.Time }
+	logs := make([]logFile, 0, len(files))
+	for _, path := range files {
+		info, err := os.Stat(path)
+		if err != nil { continue }
+		logs = append(logs, logFile{path: path, mod: info.ModTime()})
 	}
+	if len(logs) == 0 { return []string{"no readable Minecraft server log exists"} }
+	sort.Slice(logs, func(i, j int) bool { return logs[i].mod.After(logs[j].mod) })
 
-	sort.Slice(files, func(i, j int) bool {
-		aInfo, aErr := os.Stat(files[i])
-		bInfo, bErr := os.Stat(files[j])
-		if aErr != nil || bErr != nil {
-			return files[i] > files[j]
-		}
-		return aInfo.ModTime().After(bInfo.ModTime())
-	})
-
-	data, err := os.ReadFile(files[0])
-	if err != nil {
-		return []string{"cannot read Minecraft log: " + err.Error()}
-	}
-
+	data, err := os.ReadFile(logs[0].path)
+	if err != nil { return []string{"cannot read Minecraft log: " + err.Error()} }
 	all := splitLines(string(data))
-	if len(all) > lines {
-		all = all[len(all)-lines:]
-	}
+	if len(all) > lines { all = all[len(all)-lines:] }
 	return all
 }
 
 func splitLines(s string) []string {
 	s = strings.ReplaceAll(s, "\r", "")
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) == 1 && lines[0] == "" {
-		return nil
-	}
+	if len(lines) == 1 && lines[0] == "" { return nil }
 	return lines
-}
-
-func filterProbeLines(lines []string) []string {
-	filtered := lines[:0]
-	for _, line := range lines {
-		if strings.Contains(line, "There are ") && strings.Contains(line, " of a max of ") && strings.Contains(line, " players online:") {
-			continue
-		}
-		filtered = append(filtered, line)
-	}
-	return filtered
 }
 
 func writeJSON(w http.ResponseWriter, value any) {
@@ -453,9 +387,7 @@ func writeJSON(w http.ResponseWriter, value any) {
 
 func writeEvent(w http.ResponseWriter, value any) error {
 	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	_, err = fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data)
 	return err
 }
