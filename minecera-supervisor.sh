@@ -22,15 +22,31 @@ SERVER_PID=""
 SERVER_FD=""
 SERVER_FIFO=""
 SERVER_LOG=""
+SERVER_HEALTH_LOG=""
 PROBE_PID=""
 PROBE_FD=""
 PROBE_FIFO=""
 PROBE_LOG=""
+PROBE_HEALTH_LOG=""
 SHUTTING_DOWN=0
 
 report() {
     printf '[%s] %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG_DIR/supervisor.log"
     logger -t minecera -- "$*" 2>/dev/null || true
+}
+
+filter_server_output() {
+    local log="$1"
+    local health="$2"
+    local line
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^\[[0-9]{2}:[0-9]{2}:[0-9]{2}\ [A-Z]+\]:\ There\ are\ [0-9]+\ of\ a\ max\ of\ [0-9]+\ players\ online: ]]; then
+            printf '%s\n' "$line" >> "$health"
+        else
+            printf '%s\n' "$line" >> "$log"
+        fi
+    done
 }
 
 cleanup_probe() {
@@ -51,6 +67,7 @@ cleanup_probe() {
         PROBE_FIFO=""
     fi
     PROBE_PID=""
+    PROBE_HEALTH_LOG=""
 }
 
 cleanup_server() {
@@ -71,6 +88,7 @@ cleanup_server() {
         SERVER_FIFO=""
     fi
     SERVER_PID=""
+    SERVER_HEALTH_LOG=""
 }
 
 shutdown() {
@@ -109,16 +127,16 @@ wait_for_log() {
 command_ok() {
     local pid="$1"
     local fd="$2"
-    local log="$3"
+    local health_log="$3"
     local pattern="$4"
     local timeout="$5"
     local offset
 
-    offset=$(wc -c < "$log")
+    offset=$(wc -c < "$health_log" 2>/dev/null || printf '0')
     printf '%s\n' "list" >&"$fd" || return 1
 
     for _ in $(seq 1 "$timeout"); do
-        tail -c +$((offset + 1)) "$log" 2>/dev/null | grep -Eq "$pattern" && return 0
+        tail -c +$((offset + 1)) "$health_log" 2>/dev/null | grep -Eq "$pattern" && return 0
         kill -0 "$pid" 2>/dev/null || return 1
         sleep 1
     done
@@ -130,24 +148,30 @@ start_process() {
     local cwd="$2"
     local log="$3"
     local fifo="$4"
+    local health_log
     local fd
 
     rm -f "$fifo"
     mkfifo "$fifo"
     exec {fd}<>"$fifo"
 
+    health_log="$RUN/${mode}.health"
+    : > "$health_log"
+
     if [ "$mode" = "real" ]; then
-        bash "$START" <&"$fd" >"$log" 2>&1 &
+        bash "$START" <&"$fd" > >(filter_server_output "$log" "$health_log") 2>&1 &
         SERVER_PID=$!
         SERVER_FD="$fd"
         SERVER_FIFO="$fifo"
         SERVER_LOG="$log"
+        SERVER_HEALTH_LOG="$health_log"
     else
-        MINECERA_ROOT="$cwd" MINECERA_JAR="$cwd/paper-26.2.jar" bash "$START" <&"$fd" >"$log" 2>&1 &
+        MINECERA_ROOT="$cwd" MINECERA_JAR="$cwd/paper-26.2.jar" bash "$START" <&"$fd" > >(filter_server_output "$log" "$health_log") 2>&1 &
         PROBE_PID=$!
         PROBE_FD="$fd"
         PROBE_FIFO="$fifo"
         PROBE_LOG="$log"
+        PROBE_HEALTH_LOG="$health_log"
     fi
 }
 
@@ -164,7 +188,7 @@ start_server() {
         return 1
     fi
 
-    if ! command_ok "$SERVER_PID" "$SERVER_FD" "$SERVER_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
+    if ! command_ok "$SERVER_PID" "$SERVER_FD" "$SERVER_HEALTH_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
         report "startup command health check failed"
         cleanup_server
         return 1
@@ -251,7 +275,7 @@ validate_backup() {
         return 1
     fi
 
-    if ! command_ok "$PROBE_PID" "$PROBE_FD" "$PROBE_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
+    if ! command_ok "$PROBE_PID" "$PROBE_FD" "$PROBE_HEALTH_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
         report "backup failed command validation"
         cleanup_probe
         rm -rf -- "$probe"
@@ -429,7 +453,7 @@ monitor() {
             cleanup_server
             return 1
         fi
-        if ! command_ok "$SERVER_PID" "$SERVER_FD" "$SERVER_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
+        if ! command_ok "$SERVER_PID" "$SERVER_FD" "$SERVER_HEALTH_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
             report "hang detected: Minecraft did not answer a main-thread command"
             cleanup_server
             return 1
