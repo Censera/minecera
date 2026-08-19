@@ -4,35 +4,747 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Minecera</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css">
 <style>
-:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3}*{box-sizing:border-box}body{margin:0;background:#0d1117}main{max-width:1400px;margin:auto;padding:24px}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}.title{font-size:24px;font-weight:700}.state{padding:5px 10px;border-radius:999px;background:#21262d}.state.running{color:#3fb950}.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}.label{font-size:11px;color:#8b949e;text-transform:uppercase}.value{margin-top:5px;font-size:18px;font-variant-numeric:tabular-nums}.controls{display:flex;gap:8px;flex-wrap:wrap;margin:16px 0}.button{border:1px solid #30363d;background:#21262d;color:#e6edf3;padding:9px 14px;border-radius:6px;cursor:pointer}.button:hover{background:#30363d}.button.danger{color:#ff7b72}.log{height:60vh;overflow:auto;background:#010409;border:1px solid #30363d;border-radius:8px;padding:14px;font:13px/1.45 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap}.event{margin:12px 0;color:#8b949e;font-size:13px}.command{display:flex;margin-top:10px}.command input{flex:1;background:#161b22;color:#e6edf3;border:1px solid #30363d;border-radius:6px 0 0 6px;padding:10px;font:14px monospace}.command button{border-radius:0 6px 6px 0}.muted{color:#8b949e}@media(max-width:900px){.grid{grid-template-columns:repeat(3,1fr)}}@media(max-width:550px){main{padding:12px}.grid{grid-template-columns:repeat(2,1fr)}}
+:root {
+  color-scheme: dark;
+  --bg: #090b0e;
+  --surface: #0e1116;
+  --surface-2: #12161c;
+  --line: #20262e;
+  --line-strong: #2b333d;
+  --text: #e7eaee;
+  --muted: #7d8793;
+  --dim: #56616e;
+  --blue: #7aa2f7;
+  --cyan: #73daca;
+  --green: #9ece6a;
+  --yellow: #e0af68;
+  --red: #f7768e;
+  --mono: "Lilex", "Zed Mono", Iosevka, "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: "Zed Sans", "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+}
+button, input { font: inherit; }
+button { color: inherit; }
+
+.app {
+  height: 100dvh;
+  min-height: 420px;
+  display: grid;
+  grid-template-rows: 48px 34px minmax(0, 1fr) 34px;
+  background: var(--bg);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.brand-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dim);
+  box-shadow: 0 0 0 3px rgba(125,135,147,.08);
+  transition: background .18s ease, box-shadow .18s ease;
+}
+
+.brand-mark.running { background: var(--green); box-shadow: 0 0 0 3px rgba(158,206,106,.08); }
+.brand-mark.transition { background: var(--yellow); box-shadow: 0 0 0 3px rgba(224,175,104,.08); animation: pulse 1.2s ease-in-out infinite; }
+.brand-mark.error { background: var(--red); box-shadow: 0 0 0 3px rgba(247,118,142,.08); }
+
+@keyframes pulse {
+  50% { opacity: .42; transform: scale(.78); }
+}
+
+.state-text {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.header-spacer { flex: 1; }
+
+.actions { display: flex; align-items: center; gap: 4px; }
+
+.action {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color .12s ease, background .12s ease, border-color .12s ease;
+}
+
+.action:hover:not(:disabled) { color: var(--text); background: var(--surface-2); border-color: var(--line); }
+.action:focus-visible { outline: 1px solid var(--blue); outline-offset: 1px; }
+.action:disabled { opacity: .4; cursor: default; }
+.action.danger:hover:not(:disabled) { color: var(--red); }
+
+.metrics {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+  background: #0b0e12;
+  overflow: hidden;
+}
+
+.metric {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  white-space: nowrap;
+  font: 11px var(--mono);
+}
+
+.metric-key { color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+.metric-value { color: #b7bec8; font-variant-numeric: tabular-nums; }
+
+.console-shell {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+#terminal {
+  position: absolute;
+  inset: 0;
+  padding: 12px 14px 8px;
+}
+
+.xterm { height: 100%; }
+.xterm-viewport { background: transparent !important; }
+.xterm-screen { padding-right: 6px; }
+.xterm .xterm-helpers textarea { opacity: 0 !important; }
+
+.console-overlay {
+  position: absolute;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.badge {
+  display: none;
+  padding: 4px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: rgba(14,17,22,.95);
+  color: var(--muted);
+  font: 11px var(--mono);
+  box-shadow: 0 8px 30px rgba(0,0,0,.28);
+}
+
+.badge.visible { display: block; }
+.badge.live { color: var(--green); border-color: rgba(158,206,106,.26); }
+.badge.new { color: var(--blue); border-color: rgba(122,162,247,.26); pointer-events: auto; cursor: pointer; }
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.footer-event {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footer-spacer { flex: 1; }
+.footer-hint { color: var(--dim); font-family: var(--mono); }
+.connection { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.connection-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.connection.offline .connection-dot { background: var(--red); }
+
+.search {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  z-index: 5;
+  display: none;
+  width: min(420px, calc(100% - 28px));
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: rgba(14,17,22,.97);
+  box-shadow: 0 12px 36px rgba(0,0,0,.3);
+}
+
+.search.visible { display: flex; }
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font: 12px var(--mono); }
+.search-count { color: var(--dim); font: 11px var(--mono); white-space: nowrap; }
+.search-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+
+.toast {
+  position: absolute;
+  left: 50%;
+  bottom: 50px;
+  z-index: 6;
+  transform: translate(-50%, 10px);
+  opacity: 0;
+  pointer-events: none;
+  padding: 6px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: rgba(14,17,22,.96);
+  color: var(--muted);
+  font: 11px var(--mono);
+  transition: opacity .16s ease, transform .16s ease;
+}
+
+.toast.visible { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 760px) {
+  .header { padding-inline: 10px; gap: 10px; }
+  .state-text { display: none; }
+  .action { padding-inline: 7px; }
+  .metrics { gap: 12px; padding-inline: 10px; }
+  .metric:nth-child(n+5) { display: none; }
+  #terminal { padding: 8px 8px 6px; }
+  .footer { padding-inline: 10px; }
+  .footer-hint { display: none; }
+}
+
+@media (max-width: 520px) {
+  .app { grid-template-rows: 46px 32px minmax(0, 1fr) 32px; }
+  .action:nth-child(4), .action:nth-child(5) { display: none; }
+  .metric:nth-child(n+4) { display: none; }
+}
 </style>
 </head>
-<body><main>
-<div class="top"><div class="title">Minecera</div><div id="state" class="state">loading</div></div>
-<section class="grid">
-<div class="card"><div class="label">PID</div><div id="pid" class="value">-</div></div>
-<div class="card"><div class="label">Uptime</div><div id="uptime" class="value">-</div></div>
-<div class="card"><div class="label">CPU</div><div id="cpu" class="value">-</div></div>
-<div class="card"><div class="label">Memory</div><div id="memory" class="value">-</div></div>
-<div class="card"><div class="label">Load</div><div id="load" class="value">-</div></div>
-<div class="card"><div class="label">Disk</div><div id="disk" class="value">-</div></div>
-<div class="card"><div class="label">Backups</div><div id="backups" class="value">-</div></div>
-<div class="card"><div class="label">Last backup</div><div id="lastBackup" class="value">-</div></div>
-</section>
-<div class="controls">
-<button class="button" onclick="control('start')">Start</button><button class="button" onclick="control('restart')">Restart</button><button class="button" onclick="control('backup')">Backup</button><button class="button" onclick="control('save')">Save</button><button class="button" onclick="control('reload')">Reload</button><button class="button danger" onclick="control('stop')">Stop</button>
+<body>
+<div class="app">
+  <header class="header">
+    <div class="brand">
+      <span id="brand-mark" class="brand-mark"></span>
+      <span>Minecera</span>
+      <span id="state-text" class="state-text">CONNECTING</span>
+    </div>
+    <div class="header-spacer"></div>
+    <nav class="actions" aria-label="Server controls">
+      <button class="action" data-action="start">Start</button>
+      <button class="action" data-action="restart">Restart</button>
+      <button class="action" data-action="backup">Backup</button>
+      <button class="action" data-action="save">Save</button>
+      <button class="action" data-action="reload">Reload</button>
+      <button class="action danger" data-action="stop">Stop</button>
+    </nav>
+  </header>
+
+  <section class="metrics" aria-label="Server resources">
+    <div class="metric"><span class="metric-key">pid</span><span id="pid" class="metric-value">-</span></div>
+    <div class="metric"><span class="metric-key">up</span><span id="uptime" class="metric-value">-</span></div>
+    <div class="metric"><span class="metric-key">cpu</span><span id="cpu" class="metric-value">-</span></div>
+    <div class="metric"><span class="metric-key">mem</span><span id="memory" class="metric-value">-</span></div>
+    <div class="metric"><span class="metric-key">load</span><span id="load" class="metric-value">-</span></div>
+    <div class="metric"><span class="metric-key">disk</span><span id="disk" class="metric-value">-</span></div>
+    <div class="metric"><span class="metric-key">backup</span><span id="backup" class="metric-value">-</span></div>
+  </section>
+
+  <main class="console-shell">
+    <div id="terminal" aria-label="Minecraft server console"></div>
+    <div id="search" class="search" role="search">
+      <input id="search-input" type="search" aria-label="Search console" autocomplete="off" spellcheck="false" placeholder="Search console…">
+      <span id="search-count" class="search-count"></span>
+      <button id="search-close" class="search-close" type="button" aria-label="Close search">Esc</button>
+    </div>
+    <div class="console-overlay">
+      <button id="new-lines" class="badge new" type="button">↓ new output</button>
+      <div id="live-badge" class="badge live">LIVE</div>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </main>
+
+  <footer class="footer">
+    <div id="event" class="footer-event">Waiting for supervisor event.</div>
+    <div class="footer-spacer"></div>
+    <div class="footer-hint">Ctrl+Shift+F search · Ctrl+L clear · ↑↓ history</div>
+    <div id="connection" class="connection"><span class="connection-dot"></span><span id="connection-text">connected</span></div>
+  </footer>
 </div>
-<div id="event" class="event">Waiting for supervisor event.</div>
-<div id="log" class="log">Connecting...</div>
-<form class="command" onsubmit="sendCommand(event)"><input id="command" autocomplete="off" placeholder="Minecraft console command"><button class="button" type="submit">Send</button></form>
-</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.16.0/lib/addon-search.js"></script>
 <script>
-const $=id=>document.getElementById(id);
-function render(s){const x=s.status;const state=$('state');state.textContent=x.state.toUpperCase();state.className='state '+(x.state==='running'?'running':'');$('pid').textContent=x.pid||'-';$('uptime').textContent=x.uptime||'-';$('cpu').textContent=x.cpu||'-';$('memory').textContent=x.memory||'-';$('load').textContent=x.load||'-';$('disk').textContent=x.disk||'-';$('backups').textContent=x.backups;$('lastBackup').textContent=x.lastBackup||'-';$('event').textContent=x.journalEvent||'-';if(s.logs)$('log').textContent=s.logs.join('\n');}
-async function control(action){const r=await fetch('/api/control',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});if(!r.ok)alert(await r.text());}
-async function sendCommand(e){e.preventDefault();const input=$('command');const command=input.value.trim();if(!command)return;const r=await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command})});if(!r.ok)alert(await r.text());input.value='';}
-async function load(){const r=await fetch('/api/status');render(await r.json());}
-const events=new EventSource('/api/events');events.addEventListener('snapshot',e=>render(JSON.parse(e.data)));events.onerror=()=>{$('state').textContent='DISCONNECTED';$('state').className='state'};load();
+(() => {
+  const $ = id => document.getElementById(id);
+  const root = document.documentElement;
+
+  const terminal = new Terminal({
+    allowProposedApi: true,
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    convertEol: true,
+    scrollback: 6000,
+    fontFamily: getComputedStyle(root).getPropertyValue('--mono'),
+    fontSize: 14,
+    lineHeight: 1.22,
+    letterSpacing: 0,
+    theme: {
+      background: '#090b0e',
+      foreground: '#d9dee5',
+      cursor: '#d9dee5',
+      cursorAccent: '#090b0e',
+      selectionBackground: '#2a3443',
+      black: '#090b0e',
+      brightBlack: '#56616e',
+      red: '#f7768e',
+      brightRed: '#ff8fa3',
+      green: '#9ece6a',
+      brightGreen: '#b5e08d',
+      yellow: '#e0af68',
+      brightYellow: '#f2c77f',
+      blue: '#7aa2f7',
+      brightBlue: '#9ab7ff',
+      magenta: '#bb9af7',
+      brightMagenta: '#c9adff',
+      cyan: '#73daca',
+      brightCyan: '#8be3d6',
+      white: '#aeb7c2',
+      brightWhite: '#e7eaee'
+    }
+  });
+
+  const fit = new FitAddon.FitAddon();
+  const search = new SearchAddon.SearchAddon();
+  terminal.loadAddon(fit);
+  terminal.loadAddon(search);
+  terminal.open($('terminal'));
+
+  const historyKey = 'minecera.command-history';
+  let history = JSON.parse(localStorage.getItem(historyKey) || '[]');
+  let historyIndex = history.length;
+  let input = '';
+  let cursor = 0;
+  let connected = false;
+  let lastLines = [];
+  let atBottom = true;
+  let operation = null;
+  let toastTimer = null;
+
+  const prompt = '\x1b[38;5;110m❯\x1b[0m ';
+  const prefix = '[minecera] ';
+
+  function showToast(text) {
+    const el = $('toast');
+    el.textContent = text;
+    el.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('visible'), 1800);
+  }
+
+  function printPrompt() {
+    terminal.write('\r\x1b[2K' + prompt + escapeInput(input) + '\x1b[0m');
+    const move = input.length - cursor;
+    if (move > 0) terminal.write('\x1b[' + move + 'D');
+  }
+
+  function escapeInput(value) {
+    return value.replace(/[\x00-\x1f\x7f]/g, '');
+  }
+
+  function submitCommand() {
+    const command = input.trim();
+    if (!command) return;
+    if (history[history.length - 1] !== command) history.push(command);
+    history = history.slice(-200);
+    localStorage.setItem(historyKey, JSON.stringify(history));
+    historyIndex = history.length;
+    terminal.write('\r\x1b[2K' + prompt + command + '\r\n');
+    input = '';
+    cursor = 0;
+    printPrompt();
+    sendCommand(command);
+  }
+
+  function setInput(value) {
+    input = value;
+    cursor = value.length;
+    printPrompt();
+  }
+
+  function historyMove(direction) {
+    if (!history.length) return;
+    historyIndex = Math.max(0, Math.min(history.length, historyIndex + direction));
+    setInput(historyIndex === history.length ? '' : history[historyIndex]);
+  }
+
+  async function sendCommand(command) {
+    try {
+      const response = await fetch('/api/command', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({command})
+      });
+      if (!response.ok) throw new Error((await response.text()) || 'command rejected');
+    } catch (error) {
+      writeMinecera('ERR  ' + error.message, 'red');
+    }
+  }
+
+  async function control(action) {
+    operation = action;
+    updateOperation(action);
+    try {
+      const response = await fetch('/api/control', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({action})
+      });
+      if (!response.ok) throw new Error((await response.text()) || 'control request failed');
+      writeMinecera(action + ' requested', 'blue');
+    } catch (error) {
+      operation = null;
+      updateOperation(null);
+      writeMinecera('ERR  ' + error.message, 'red');
+    }
+  }
+
+  function writeMinecera(message, color) {
+    const ansi = {green: 72, blue: 110, yellow: 179, red: 204};
+    const c = ansi[color] || 244;
+    terminal.write('\r\n\x1b[38;5;' + c + 'm' + prefix + message + '\x1b[0m\r\n');
+    printPrompt();
+  }
+
+  function colorize(line) {
+    let text = line.replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '');
+    const match = text.match(/^(\[[0-9]{2}:[0-9]{2}:[0-9]{2}\])(\s*)(\w+)(:)?(\s*)(.*)$/);
+    if (match) {
+      const level = match[3];
+      let color = 250;
+      if (level === 'WARN') color = 179;
+      if (level === 'ERROR' || level === 'FATAL') color = 204;
+      if (level === 'INFO') color = 244;
+      return '\x1b[38;5;244m' + match[1] + '\x1b[0m' + match[2] + '\x1b[38;5;' + color + 'm' + level + '\x1b[0m' + (match[4] || '') + match[5] + match[6];
+    }
+    if (/\b(WARN|ERROR|FATAL)\b/.test(text)) return '\x1b[38;5;179m' + text + '\x1b[0m';
+    return text;
+  }
+
+  function appendLogs(lines) {
+    if (!Array.isArray(lines)) return;
+    if (!lastLines.length) {
+      terminal.write(lines.map(colorize).join('\r\n'));
+      if (lines.length) terminal.write('\r\n');
+      lastLines = lines.slice(-300);
+      return;
+    }
+
+    const overlapLimit = Math.min(lastLines.length, lines.length, 40);
+    let overlap = 0;
+    for (let size = overlapLimit; size > 0; size--) {
+      let same = true;
+      for (let i = 0; i < size; i++) {
+        if (lastLines[lastLines.length - size + i] !== lines[i]) { same = false; break; }
+      }
+      if (same) { overlap = size; break; }
+    }
+
+    if (overlap === 0) {
+      if (lines[0] !== lastLines[lastLines.length - 1]) {
+        terminal.clear();
+        terminal.write(lines.map(colorize).join('\r\n'));
+        if (lines.length) terminal.write('\r\n');
+      }
+      lastLines = lines.slice(-300);
+      return;
+    }
+
+    const fresh = lines.slice(overlap);
+    if (fresh.length) {
+      const wasBottom = atBottom;
+      terminal.write(fresh.map(colorize).join('\r\n') + '\r\n');
+      if (wasBottom) terminal.scrollToBottom();
+    }
+    lastLines = lines.slice(-300);
+    $('live-badge').classList.toggle('visible', atBottom);
+  }
+
+  function renderStatus(snapshot) {
+    const s = snapshot.status || {};
+    const state = s.state || 'offline';
+    const transition = !!operation;
+    const mark = $('brand-mark');
+    mark.className = 'brand-mark ' + (transition ? 'transition' : state === 'running' ? 'running' : state === 'offline' ? 'error' : '');
+    $('state-text').textContent = transition ? operation.toUpperCase() : state.toUpperCase();
+    $('pid').textContent = s.pid || '-';
+    $('uptime').textContent = s.uptime || '-';
+    $('cpu').textContent = s.cpu || '-';
+    $('memory').textContent = s.memory || '-';
+    $('load').textContent = s.load || '-';
+    $('disk').textContent = s.disk || '-';
+    $('backup').textContent = s.lastBackup && s.backups ? s.backups + ' · ' + s.lastBackup : '-';
+    $('event').textContent = s.journalEvent || 'No supervisor event.';
+
+    if (operation === 'restart' && state === 'running' && s.pid) {
+      writeMinecera('Minecraft restarted without backup restore', 'green');
+      operation = null;
+    } else if (operation === 'start' && state === 'running') {
+      writeMinecera('Minecraft started', 'green');
+      operation = null;
+    } else if (operation === 'stop' && state !== 'running') {
+      writeMinecera('Minecraft stopped', 'yellow');
+      operation = null;
+    } else if (operation === 'backup' && s.lastBackup !== '-') {
+      writeMinecera('backup state updated', 'green');
+      operation = null;
+    }
+    updateOperation(operation);
+  }
+
+  function updateOperation(name) {
+    document.querySelectorAll('[data-action]').forEach(button => {
+      const action = button.dataset.action;
+      button.disabled = !!name && action !== 'stop';
+    });
+  }
+
+  function appendInitial() {
+    terminal.write('\x1b[38;5;110mMinecera console\x1b[0m\r\n');
+    terminal.write('\x1b[38;5;244m────────────────────────────────────────────────────────\x1b[0m\r\n');
+    terminal.write('\x1b[38;5;244mLive Minecraft output · Ctrl+Shift+F search · Ctrl+L clear\x1b[0m\r\n\r\n');
+    printPrompt();
+  }
+
+  async function initialStatus() {
+    try {
+      const response = await fetch('/api/status', {cache: 'no-store'});
+      if (!response.ok) throw new Error('status unavailable');
+      renderStatus(await response.json());
+      connected = true;
+    } catch (error) {
+      connected = false;
+      setConnection(false);
+      writeMinecera('ERR  ' + error.message, 'red');
+    }
+  }
+
+  function setConnection(value) {
+    connected = value;
+    $('connection').classList.toggle('offline', !value);
+    $('connection-text').textContent = value ? 'connected' : 'disconnected';
+  }
+
+  terminal.onScroll(() => {
+    atBottom = terminal.buffer.active.viewportY >= terminal.buffer.active.baseY;
+    $('live-badge').classList.toggle('visible', atBottom);
+  });
+
+  terminal.onKey(({key, domEvent}) => {
+    const code = domEvent.keyCode;
+    const ctrl = domEvent.ctrlKey;
+
+    if (ctrl && domEvent.shiftKey && code === 70) {
+      domEvent.preventDefault();
+      openSearch();
+      return;
+    }
+    if (ctrl && code === 76) {
+      domEvent.preventDefault();
+      terminal.clear();
+      lastLines = [];
+      printPrompt();
+      return;
+    }
+    if (domEvent.key === 'Enter') {
+      domEvent.preventDefault();
+      submitCommand();
+      return;
+    }
+    if (domEvent.key === 'ArrowUp') {
+      domEvent.preventDefault();
+      historyMove(-1);
+      return;
+    }
+    if (domEvent.key === 'ArrowDown') {
+      domEvent.preventDefault();
+      historyMove(1);
+      return;
+    }
+    if (domEvent.key === 'Home') {
+      domEvent.preventDefault();
+      cursor = 0;
+      printPrompt();
+      return;
+    }
+    if (domEvent.key === 'End') {
+      domEvent.preventDefault();
+      cursor = input.length;
+      printPrompt();
+      return;
+    }
+    if (ctrl && code === 65) {
+      domEvent.preventDefault();
+      cursor = 0;
+      printPrompt();
+      return;
+    }
+    if (ctrl && code === 69) {
+      domEvent.preventDefault();
+      cursor = input.length;
+      printPrompt();
+      return;
+    }
+    if (ctrl && code === 85) {
+      domEvent.preventDefault();
+      input = input.slice(cursor);
+      cursor = 0;
+      printPrompt();
+      return;
+    }
+    if (ctrl && code === 75) {
+      domEvent.preventDefault();
+      input = input.slice(0, cursor);
+      printPrompt();
+      return;
+    }
+    if (ctrl && code === 82) {
+      domEvent.preventDefault();
+      openSearch();
+      return;
+    }
+    if (domEvent.key === 'Escape') {
+      input = '';
+      cursor = 0;
+      printPrompt();
+      return;
+    }
+
+    if (key === '\u007f') {
+      domEvent.preventDefault();
+      if (cursor > 0) {
+        input = input.slice(0, cursor - 1) + input.slice(cursor);
+        cursor--;
+        printPrompt();
+      }
+      return;
+    }
+
+    if (key.length === 1 && !domEvent.altKey && !domEvent.metaKey) {
+      domEvent.preventDefault();
+      input = input.slice(0, cursor) + key + input.slice(cursor);
+      cursor++;
+      printPrompt();
+    }
+  });
+
+  terminal.onSelectionChange(() => {
+    // Keep native xterm selection behavior. Clipboard shortcuts are handled by the terminal.
+  });
+
+  function openSearch() {
+    $('search').classList.add('visible');
+    $('search-input').focus();
+    $('search-input').select();
+  }
+
+  function closeSearch() {
+    $('search').classList.remove('visible');
+    terminal.focus();
+  }
+
+  $('search-input').addEventListener('input', event => {
+    const value = event.target.value;
+    if (!value) {
+      search.clearDecorations();
+      $('search-count').textContent = '';
+      return;
+    }
+    const found = search.findNext(value, {decorations: {matchBackground: '#33415c', activeMatchBackground: '#4b5d84'}});
+    $('search-count').textContent = found ? 'match' : 'none';
+  });
+
+  $('search-input').addEventListener('keydown', event => {
+    if (event.key === 'Escape') { event.preventDefault(); closeSearch(); return; }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      const value = event.target.value;
+      if (event.shiftKey) search.findPrevious(value); else search.findNext(value);
+    }
+  });
+
+  $('search-close').addEventListener('click', closeSearch);
+  $('new-lines').addEventListener('click', () => {
+    terminal.scrollToBottom();
+    atBottom = true;
+    $('new-lines').classList.remove('visible');
+    $('live-badge').classList.add('visible');
+  });
+
+  document.querySelectorAll('[data-action]').forEach(button => {
+    button.addEventListener('click', () => control(button.dataset.action));
+  });
+
+  window.addEventListener('resize', () => requestAnimationFrame(() => fit.fit()));
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && $('search').classList.contains('visible')) {
+      event.preventDefault();
+      closeSearch();
+    }
+  });
+
+  const events = new EventSource('/api/events');
+  events.addEventListener('snapshot', event => {
+    const snapshot = JSON.parse(event.data);
+    setConnection(true);
+    renderStatus(snapshot);
+    appendLogs(snapshot.logs);
+  });
+  events.onerror = () => {
+    setConnection(false);
+    $('brand-mark').className = 'brand-mark error';
+  };
+
+  fit.fit();
+  appendInitial();
+  updateOperation(null);
+  initialStatus();
+})();
 </script>
-</body></html>
+</body>
+</html>
