@@ -3,7 +3,7 @@
 # with caution, and make sure you know what each option does before configuring.
 #
 # If you need help with the configuration or have any questions related to Paper,
-# join us in our Discord or check the docs page.
+# join us in their Discord or check the docs page.
 #
 # File Reference: https://docs.papermc.io/paper/reference/spigot-configuration/
 # Docs: https://docs.papermc.io/
@@ -93,13 +93,9 @@ world-settings:
         villagers-max-per-tick: 4
         villagers-every: 600
         villagers-for: 100
-        flying-monsters-max-per-tick: 8
-        flying-monsters-every: 200
-        flying-monsters-for: 100
       villagers-work-immunity-after: 100
       villagers-work-immunity-for: 20
       villagers-active-for-panic: true
-      tick-inactive-villagers: true
       ignore-spectators: false
     entity-tracking-range:
       players: 128
@@ -160,9 +156,6 @@ advancements:
   disable-saving: false
   disabled:
   - minecraft:story/disabled
-players:
-  disable-saving: false
-  stats: false
 players:
   disable-saving: false
 config-version: 13
