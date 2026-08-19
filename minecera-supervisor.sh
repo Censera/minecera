@@ -9,6 +9,7 @@ BACKUPS="$ROOT/backups"
 RUN="$ROOT/run"
 QUARANTINE="$RUN/quarantine"
 LOG_DIR="$ROOT/logs"
+CONTROL="$RUN/control"
 
 START_TIMEOUT=180
 COMMAND_TIMEOUT=15
@@ -78,6 +79,7 @@ shutdown() {
     report "shutdown requested"
     cleanup_probe
     cleanup_server
+    rm -f "$CONTROL"
     exit 0
 }
 
@@ -86,6 +88,8 @@ trap cleanup_probe EXIT
 
 ensure_dirs() {
     mkdir -p "$BACKUPS" "$QUARANTINE" "$LOG_DIR" "$RUN"
+    rm -f "$CONTROL"
+    mkfifo -m 660 "$CONTROL"
 }
 
 wait_for_log() {
@@ -138,8 +142,7 @@ start_process() {
         SERVER_FIFO="$fifo"
         SERVER_LOG="$log"
     else
-        MINECERA_ROOT="$cwd" MINECERA_JAR="$cwd/paper-26.2.jar" \
-            bash "$START" <&"$fd" >"$log" 2>&1 &
+        MINECERA_ROOT="$cwd" MINECERA_JAR="$cwd/paper-26.2.jar" bash "$START" <&"$fd" >"$log" 2>&1 &
         PROBE_PID=$!
         PROBE_FD="$fd"
         PROBE_FIFO="$fifo"
@@ -192,6 +195,12 @@ stop_server() {
     sleep 5
     kill -KILL "$SERVER_PID" 2>/dev/null || true
     cleanup_server
+}
+
+send_command() {
+    local command="$1"
+    [ -n "$SERVER_FD" ] || return 1
+    printf '%s\n' "$command" >&"$SERVER_FD"
 }
 
 healthy_backup_dirs() {
@@ -261,9 +270,7 @@ validate_backup() {
 }
 
 create_backup() {
-    local date stamp candidate
-    local offset
-
+    local date stamp candidate offset
     date="$(date +%F)"
     stamp="$(date +%Y%m%d-%H%M%S)"
     candidate="$BACKUPS/.candidate-$stamp"
@@ -275,8 +282,7 @@ create_backup() {
 
     report "flushing world to disk"
     offset=$(wc -c < "$SERVER_LOG")
-    printf '%s\n' "save-all flush" >&"$SERVER_FD" || return 1
-
+    send_command "save-all flush" || return 1
     local saved=0
     for _ in $(seq 1 30); do
         if tail -c +$((offset + 1)) "$SERVER_LOG" 2>/dev/null | grep -q 'Saved the game'; then
@@ -291,7 +297,6 @@ create_backup() {
     }
 
     stop_server
-
     rm -rf -- "$candidate"
     mkdir -p "$candidate"
     report "copying world snapshot"
@@ -338,7 +343,6 @@ restore_backup() {
 
     report "quarantining failed world"
     quarantine=$(quarantine_world) || return 1
-
     report "restoring backup: $(basename "$backup")"
     if ! cp -a "$backup/world" "$WORLD"; then
         rm -rf -- "$WORLD"
@@ -360,10 +364,8 @@ restore_backup() {
 
 recover() {
     local backup
-
     report "entering recovery"
     stop_server
-
     while IFS= read -r backup; do
         [ -z "$backup" ] && continue
         if restore_backup "$backup"; then
@@ -371,27 +373,64 @@ recover() {
             return 0
         fi
     done < <(healthy_backup_dirs)
-
     report "recovery failed: no healthy backup could be started"
     return 1
+}
+
+handle_control() {
+    local command
+    while IFS= read -r command; do
+        [ -z "$command" ] && continue
+        case "$command" in
+            status)
+                if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+                    printf 'running pid=%s\n' "$SERVER_PID"
+                else
+                    printf 'stopped\n'
+                fi
+                ;;
+            stop)
+                report "console requested stop"
+                stop_server
+                ;;
+            restart)
+                report "console requested restart"
+                stop_server
+                ;;
+            backup)
+                if [ -n "$SERVER_PID" ] && kill -0 "$SERVER_PID" 2>/dev/null; then
+                    create_backup || report "console backup failed"
+                    start_server || report "server failed after console backup"
+                else
+                    report "console backup rejected: server is not running"
+                fi
+                ;;
+            save)
+                send_command "save-all flush" || report "console save failed: server is not running"
+                ;;
+            reload)
+                send_command "reload confirm" || report "console reload failed: server is not running"
+                ;;
+            *)
+                send_command "$command" || report "console command rejected: server is not running"
+                ;;
+        esac
+    done < "$CONTROL"
 }
 
 monitor() {
     while true; do
         sleep "$MONITOR_INTERVAL"
-
         if ! kill -0 "$SERVER_PID" 2>/dev/null; then
             report "Minecraft exited unexpectedly"
             cleanup_server
             return 1
         fi
-
         if ! command_ok "$SERVER_PID" "$SERVER_FD" "$SERVER_LOG" 'There are [0-9]+ of a max of [0-9]+ players online' "$COMMAND_TIMEOUT"; then
             report "hang detected: Minecraft did not answer a main-thread command"
             cleanup_server
             return 1
         fi
-
         if backup_due; then
             report "daily backup due"
             if ! create_backup; then
@@ -407,10 +446,11 @@ monitor() {
 
 main() {
     ensure_dirs
-    [ -f "$JAR" ] || { report "missing Paper jar: $JAR"; exit 1; }
+    [ -f "$JAR" ] || { report "missing Paper jar"; exit 1; }
     [ -f "$ROOT/eula.txt" ] || { report "missing eula.txt"; exit 1; }
-    [ -d "$WORLD" ] || { report "missing world directory: $WORLD"; exit 1; }
+    [ -d "$WORLD" ] || { report "missing world directory"; exit 1; }
 
+    handle_control &
     while true; do
         if ! start_server; then
             if ! recover; then
@@ -418,7 +458,6 @@ main() {
             fi
             continue
         fi
-
         if ! monitor; then
             if ! recover; then
                 exit 1
