@@ -10,14 +10,15 @@ mkdir -p "$PLUGINS_DIR" "$DATAPACKS_DIR" "$RESOURCEPACKS_DIR"
 download_list() {
     local list="$1"
     local destination="$2"
-    local line name url tmp
+    local line name url tmp pattern
 
     [[ -f "$list" ]] || return 0
+    pattern='^(.+)[[:space:]]\((https?://[^)]*)\)$'
 
     while IFS= read -r line || [ -n "$line" ]; do
         [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
 
-        if [[ ! "$line" =~ ^(.+)[[:space:]]\((https?://[^)]*)\)$ ]]; then
+        if [[ ! "$line" =~ $pattern ]]; then
             echo "invalid entry in $list: $line" >&2
             return 1
         fi
@@ -51,14 +52,11 @@ download_list() {
 
 echo "Downloading plugins..."
 download_list "$PLUGINS_DIR/plugin.list" "$PLUGINS_DIR"
-
 echo
 echo "Downloading datapacks..."
 download_list "$DATAPACKS_DIR/datapacks.list" "$DATAPACKS_DIR"
-
 echo
 echo "Downloading resource packs..."
 download_list "$RESOURCEPACKS_DIR/resourcepacks.list" "$RESOURCEPACKS_DIR"
-
 echo
 echo "Setup complete."
