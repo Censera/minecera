@@ -2,9 +2,13 @@
 # As you can see, there's tons to configure. Some options may impact gameplay, so use
 # with caution, and make sure you know what each option does before configuring.
 #
-# If you need help with Paper, check the documentation or community resources.
+# If you need help with the configuration or have any questions related to Paper,
+# join us in our Discord or check the docs page.
 #
 # File Reference: https://docs.papermc.io/paper/reference/spigot-configuration/
+# Docs: https://docs.papermc.io/
+# Discord: https://discord.gg/papermc
+# Website: https://papermc.io/
 
 settings:
   debug: false
@@ -32,6 +36,7 @@ settings:
   log-named-deaths: true
 world-settings:
   default:
+    seed-ocean: 14357621
     below-zero-generation-in-existing-chunks: true
     merge-radius:
       item: 0.5
@@ -72,6 +77,11 @@ world-settings:
       glowberry-modifier: 100
       pitcherplant-modifier: 100
     entity-activation-range:
+      villagers-work-immunity-after: 100
+      villagers-work-immunity-for: 20
+      villagers-active-for-panic: true
+      tick-inactive-villagers: true
+      ignore-spectators: false
       animals: 32
       monsters: 32
       raiders: 64
@@ -80,6 +90,8 @@ world-settings:
       villagers: 32
       flying-monsters: 32
       wake-up-inactive:
+        monsters-for: 100
+        villagers-for: 100
         animals-max-per-tick: 4
         animals-every: 1200
         animals-for: 100
