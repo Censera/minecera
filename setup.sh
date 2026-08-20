@@ -3,7 +3,7 @@ set -euo pipefail
 
 PLUGINS_DIR="plugins"
 DATAPACKS_DIR="world/datapacks"
-RESOURCEPACKS_DIR="resourcpacks"
+RESOURCEPACKS_DIR="resourcepacks"
 
 mkdir -p "$PLUGINS_DIR" "$DATAPACKS_DIR" "$RESOURCEPACKS_DIR"
 
