@@ -3,19 +3,22 @@ set -euo pipefail
 
 PLUGINS_DIR="plugins"
 DATAPACKS_DIR="world/datapacks"
+RESOURCEPACKS_DIR="resourcpacks"
 
-mkdir -p "$PLUGINS_DIR" "$DATAPACKS_DIR"
+mkdir -p "$PLUGINS_DIR" "$DATAPACKS_DIR" "$RESOURCEPACKS_DIR"
 
 download_list() {
     local list="$1"
     local destination="$2"
     local line name url tmp
 
+    [[ -f "$list" ]] || return 0
+
     while IFS= read -r line || [ -n "$line" ]; do
         [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
 
         if [[ ! "$line" =~ ^(.+)[[:space:]]\((https?://[^)]*)\)$ ]]; then
-            echo "invalid entry: $line" >&2
+            echo "invalid entry in $list: $line" >&2
             return 1
         fi
 
@@ -23,7 +26,7 @@ download_list() {
         url="${BASH_REMATCH[2]}"
         tmp="$destination/.${name}.part"
 
-        printf '  %-32s' "$name"
+        printf '  %-40s' "$name"
         rm -f -- "$tmp"
 
         if curl --fail --silent --show-error --location \
@@ -49,6 +52,13 @@ download_list() {
 echo "Downloading plugins..."
 download_list "$PLUGINS_DIR/plugin.list" "$PLUGINS_DIR"
 
+echo
 echo "Downloading datapacks..."
 download_list "$DATAPACKS_DIR/datapacks.list" "$DATAPACKS_DIR"
-echo "Done."
+
+echo
+echo "Downloading resource packs..."
+download_list "$RESOURCEPACKS_DIR/resourcepacks.list" "$RESOURCEPACKS_DIR"
+
+echo
+echo "Setup complete."
