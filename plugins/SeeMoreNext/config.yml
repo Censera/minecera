@@ -1,0 +1,41 @@
+# Configuration for SeeMoreNext.
+# Please don't change this!
+version: 2
+
+# Delay (in ticks) before a player's view distance is lowered after their
+# client settings change. This stops players overloading the server by
+# constantly changing their view distance.
+update-delay: 600
+
+# Log level for view distance changes:
+#   off     — no console output at all
+#   minimal — log only when a player's view distance is actually changed
+#   all     — log on join, world change, slider adjustment, and refresh command
+log-changes: minimal
+
+# Whether to apply view distance on join before the client sends its settings.
+# If true, the server uses whatever value it has cached. If false, waits for
+# the first PlayerClientOptionsChangeEvent before applying any changes.
+wait-for-client-settings: true
+
+# Periodic polling interval in ticks. Every N ticks the plugin reads each
+# online player's getClientViewDistance() and applies changes that the
+# event system may have missed. Set to -1 to disable polling.
+polling-interval: 200
+
+# Delayed re-checks (in ticks) after PlayerClientOptionsChangeEvent.
+# Paper sometimes reports the event before its internal cache updates,
+# so we re-read getClientViewDistance() at these intervals.
+options-change-retries: [20, 60]
+
+# Settings can be specified per world.
+# Note: If a world is not listed here, or a setting is missing, the
+# settings listed under the 'default' section will be used.
+world-settings:
+  default:
+    # The maximum view distance a player in this world can have.
+    # Set to -1 to use the server's configured view distance for this world.
+    maximum-view-distance: -1
+    # The minimum view distance a player in this world can have.
+    # Defaults to the world's simulation distance if not set.
+    # minimum-view-distance: 2
