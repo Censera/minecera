@@ -44,6 +44,9 @@ plugins/Geyser-Spigot/extensions/
 plugins/Geyser-Spigot/custom_mappings/
 plugins/spark/tmp/
 
+# Downloaded resource packs
+resourcepacks/*.zip
+
 # GuestMode account database
 plugins/GuestMode/accounts.yml
 
