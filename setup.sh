@@ -53,7 +53,7 @@ download_list() {
 
 generate_forcepack_config() {
     local list="$RESOURCEPACKS_DIR/resourcepacks.list"
-    local config tmp line name url pattern
+    local config tmp line name url clean_url hash pattern
 
     [[ -f "$list" ]] || return 0
     [[ -f "$PLUGINS_DIR/ForcePack.jar" ]] || return 0
@@ -95,14 +95,34 @@ EOF
                 echo "invalid entry in $list: $line" >&2
                 return 1
             }
+
             name="${BASH_REMATCH[1]}"
             url="${BASH_REMATCH[2]}"
-            printf '        - "%s"\n' "$url"
+            clean_url="${url%%\?*}"
+
+            [[ -f "$RESOURCEPACKS_DIR/$name" ]] || {
+                echo "missing downloaded resource pack: $RESOURCEPACKS_DIR/$name" >&2
+                return 1
+            }
+
+            printf '        - "%s"\n' "$clean_url"
         done < "$list"
 
         cat <<'EOF'
-      generate-hash: true
-      hashes: []
+      generate-hash: false
+      hashes:
+EOF
+
+        while IFS= read -r line || [ -n "$line" ]; do
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+            [[ "$line" =~ $pattern ]] || return 1
+
+            name="${BASH_REMATCH[1]}"
+            hash="$(sha1sum -- "$RESOURCEPACKS_DIR/$name" | cut -d ' ' -f1 | tr '[:lower:]' '[:upper:]')"
+            printf '        - "%s"\n' "$hash"
+        done < "$list"
+
+        cat <<'EOF'
   Actions:
     ACCEPTED:
       kick: false
@@ -137,7 +157,7 @@ EOF
     } > "$tmp"
 
     mv -f -- "$tmp" "$config"
-    echo "ForcePack config generated."
+    echo "ForcePack config generated with deterministic pack order."
 }
 
 echo "Downloading plugins..."
