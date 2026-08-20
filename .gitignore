@@ -47,6 +47,9 @@ plugins/spark/tmp/
 # Downloaded resource packs
 resourcepacks/*.zip
 
+# Named-Villagers local configuration and API key
+plugins/Named-Villagers/config.yml
+
 # GuestMode account database
 plugins/GuestMode/accounts.yml
 
