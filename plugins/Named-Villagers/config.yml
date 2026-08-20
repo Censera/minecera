@@ -24,11 +24,11 @@ api:
   # The language from where the names come from
   # Uses https://en.wikipedia.org/wiki/ISO_3166-2
   # Default: NULL
-  country-code: NULL
+  country-code: https://en.wikipedia.org/wiki/ISO_3166-2:MA
 
 # Add a prefix to the illagers. You can do things like "Evil [NAME]" by typing illager-prefix: "Evil"
 # default: "" or NULL
-illager-prefix: ""
+illager-prefix: "Evil"
 
 # Send anonymous statistics to the developer
 bstats: true
