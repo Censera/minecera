@@ -14,6 +14,7 @@ CONTROL="$RUN/control"
 START_TIMEOUT=180
 STOP_TIMEOUT=120
 COMMAND_TIMEOUT=15
+HANG_CONFIRMATIONS=3
 MONITOR_INTERVAL=30
 POLL_INTERVAL=0.2
 BACKUP_HOUR=04
@@ -485,6 +486,7 @@ poll_control() {
 
 monitor_server() {
     local elapsed=0
+    local hang_failures=0
 
     while [ "$DESIRED_STATE" = "$STATE_RUNNING" ]; do
         poll_control
@@ -502,10 +504,22 @@ monitor_server() {
         elapsed=$((elapsed + 1))
         if [ "$elapsed" -ge "$MONITOR_INTERVAL" ]; then
             elapsed=0
-            if ! health_check "$SERVER_PID" "$SERVER_FD" "$SERVER_HEALTH_LOG"; then
-                report "hang detected: Minecraft did not answer a main-thread command"
-                force_stop_server
+
+            if health_check "$SERVER_PID" "$SERVER_FD" "$SERVER_HEALTH_LOG"; then
+                hang_failures=0
+            elif ! kill -0 "$SERVER_PID" 2>/dev/null; then
+                report "Minecraft exited unexpectedly"
+                cleanup_server
                 return 1
+            else
+                hang_failures=$((hang_failures + 1))
+                report "main-thread health check failed ($hang_failures/$HANG_CONFIRMATIONS); Minecraft is still running"
+
+                if [ "$hang_failures" -ge "$HANG_CONFIRMATIONS" ]; then
+                    report "hang confirmed: Minecraft did not answer repeated main-thread commands"
+                    force_stop_server
+                    return 1
+                fi
             fi
 
             if backup_due; then
@@ -558,6 +572,6 @@ main() {
                 ;;
         esac
     done
-}
+} 
 
 main "$@"
