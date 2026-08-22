@@ -150,7 +150,7 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleLogs(w http.ResponseWriter, r *http.Request) {
 	lines := 200
 	if raw := r.URL.Query().Get("lines"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= 1000 {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= 20000 {
 			lines = n
 		}
 	}
