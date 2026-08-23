@@ -99,7 +99,7 @@ prevent-damage: false
 enable-mc-164316-fix: true
 load-last: false
 await-items-adder-host: true
-use-new-force-pack-screen: false
+use-new-force-pack-screen: true
 try-to-stop-fake-accept-hacks: false
 send-loading-title: false
 delay-pack-sending-by: 0
