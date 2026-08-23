@@ -26,6 +26,7 @@ const (
 	defaultRoot = "/home/censera/minecraft"
 	listenAddr  = "127.0.0.1:8080"
 	statusEvery = 5
+	logLines    = 20000
 	webUser     = "censera"
 )
 
@@ -150,7 +151,7 @@ func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 func (a *App) handleLogs(w http.ResponseWriter, r *http.Request) {
 	lines := 200
 	if raw := r.URL.Query().Get("lines"); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= 20000 {
+		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= logLines {
 			lines = n
 		}
 	}
@@ -170,7 +171,7 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	status := a.status()
-	logs := a.logs(160)
+	logs := a.logs(logLines)
 	if err := writeEvent(w, Snapshot{Status: status, Logs: logs}); err != nil {
 		return
 	}
@@ -183,9 +184,9 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ticker.C:
 			counter++
-			logs = a.logs(160)
 			if counter >= statusEvery {
 				status = a.status()
+				logs = a.logs(logLines)
 				counter = 0
 			}
 			if err := writeEvent(w, Snapshot{Status: status, Logs: logs}); err != nil {
@@ -277,7 +278,7 @@ func (a *App) snapshot(includeLogs bool) Snapshot {
 	status := a.status()
 	var logs []string
 	if includeLogs {
-		logs = a.logs(160)
+		logs = a.logs(logLines)
 	}
 	return Snapshot{Status: status, Logs: logs}
 }
