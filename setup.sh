@@ -8,6 +8,32 @@ FORCEPACK_DIR="$PLUGINS_DIR/ForcePack"
 
 mkdir -p "$PLUGINS_DIR" "$DATAPACKS_DIR" "$RESOURCEPACKS_DIR"
 
+clean_managed_files() {
+    local list="$1"
+    local destination="$2"
+    local extension="$3"
+    local line name url pattern file
+    declare -A wanted=()
+
+    [[ -f "$list" ]] || return 0
+    pattern='^(.+)[[:space:]]\((https?://[^)]*)\)$'
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" =~ $pattern ]] || {
+            echo "invalid entry in $list: $line" >&2
+            return 1
+        }
+        name="${BASH_REMATCH[1]}"
+        wanted["$name"]=1
+    done < "$list"
+
+    while IFS= read -r -d '' file; do
+        name="$(basename -- "$file")"
+        [[ -n "${wanted[$name]+x}" ]] || rm -f -- "$file"
+    done < <(find "$destination" -maxdepth 1 -type f -name "*.$extension" -print0)
+}
+
 download_list() {
     local list="$1"
     local destination="$2"
@@ -160,12 +186,18 @@ EOF
     echo "ForcePack config generated with deterministic pack order."
 }
 
+echo "Cleaning plugins..."
+clean_managed_files "$PLUGINS_DIR/plugin.list" "$PLUGINS_DIR" jar
 echo "Downloading plugins..."
 download_list "$PLUGINS_DIR/plugin.list" "$PLUGINS_DIR"
 echo
+echo "Cleaning datapacks..."
+clean_managed_files "$DATAPACKS_DIR/datapacks.list" "$DATAPACKS_DIR" zip
 echo "Downloading datapacks..."
 download_list "$DATAPACKS_DIR/datapacks.list" "$DATAPACKS_DIR"
 echo
+echo "Cleaning resource packs..."
+clean_managed_files "$RESOURCEPACKS_DIR/resourcepacks.list" "$RESOURCEPACKS_DIR" zip
 echo "Downloading resource packs..."
 download_list "$RESOURCEPACKS_DIR/resourcepacks.list" "$RESOURCEPACKS_DIR"
 echo
