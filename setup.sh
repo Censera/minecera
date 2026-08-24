@@ -25,7 +25,7 @@ parse_list() {
     local line line_number=0
     local destination_set=0
     local destination_re='^destination[[:space:]]+"([^"]+)"$'
-    local entry_re='^([^[:space:]()]+)[[:space:]]+\((https?://[^)]+)\)$'
+    local entry_re='^([^()]+\.[^()[:space:]]+)[[:space:]]+\((https?://[^)]+)\)$'
 
     LIST_DESTINATION=""
     LIST_NAMES=()
