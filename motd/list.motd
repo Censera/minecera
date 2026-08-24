@@ -1,7 +1,11 @@
 @resources "/home/censera/minecraft/motd/resources"
 
-[]
-|
-|
-|
+// [rent-period]
+// | motd-data
+// | server-icon-link
+// | special-date
 
+[]
+| §c❤ §lForever Survival Multiplayer §8(§aVanilla++§8)§r\n§7@Java §e[1.9 → 26.2] §8| §7@Bedrock §e[26.*]
+| cat.png
+|
