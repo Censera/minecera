@@ -49,6 +49,9 @@ func newPlayerCountStore(root string) *PlayerCountStore {
 }
 
 func (s *PlayerCountStore) append(point PlayerCountPoint) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return fmt.Errorf("open player count data: %w", err)
@@ -120,9 +123,6 @@ func (s *PlayerCountStore) read(maxPoints int) (PlayerCountResponse, error) {
 }
 
 func (s *PlayerCountStore) sample() (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if _, err := os.Stat(s.stdinPath); err != nil {
 		if os.IsNotExist(err) {
 			return false, nil
