@@ -8,7 +8,7 @@ LISTS=(
     "$ROOT/datapacks.list"
     "$ROOT/plugins.list"
     "$ROOT/resources.list"
-    "$ROOT/mcpacks.list"
+    "$ROOT/packs.list"
     "$ROOT/paper.list"
 )
 

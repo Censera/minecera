@@ -54,3 +54,6 @@ run/web.credentials
 
 # MOTD data
 motd/data.motd
+
+# Geyser packs
+plugins/Geyser-Spigot/packs
