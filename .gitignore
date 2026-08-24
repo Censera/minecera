@@ -55,3 +55,6 @@ plugins/GuestMode/accounts.yml
 
 # Minecera web credentials
 run/web.credentials
+
+# Motd data
+motd/data.motd
