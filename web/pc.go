@@ -3,24 +3,27 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
 const (
 	playerCountRecordSize = 10
 	playerCountSampleRate = 5 * time.Second
-	playerCountMaxPoints   = 2000
+	playerCountMaxPoints  = 2000
 )
 
 type PlayerCountPoint struct {
-	Time  int64 `json:"time"`
+	Time  int64  `json:"time"`
 	Count uint16 `json:"count"`
 }
 
@@ -30,37 +33,27 @@ type PlayerCountResponse struct {
 }
 
 type PlayerCountStore struct {
-	path string
-	mu   sync.Mutex
+	path       string
+	healthPath string
+	stdinPath  string
+	mu         sync.Mutex
 }
 
 func newPlayerCountStore(root string) *PlayerCountStore {
-	return &PlayerCountStore{path: filepath.Join(root, "run", "player-count.bin")}
+	run := filepath.Join(root, "run")
+	return &PlayerCountStore{
+		path:       filepath.Join(run, "player-count.bin"),
+		healthPath: filepath.Join(run, "server.health"),
+		stdinPath:  filepath.Join(run, "server.stdin"),
+	}
 }
 
 func (s *PlayerCountStore) append(point PlayerCountPoint) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
-		return fmt.Errorf("create player count directory: %w", err)
-	}
-
-	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0600)
+	file, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return fmt.Errorf("open player count data: %w", err)
 	}
 	defer file.Close()
-
-	size, err := file.Seek(0, io.SeekEnd)
-	if err != nil {
-		return fmt.Errorf("seek player count data: %w", err)
-	}
-	if remainder := size % playerCountRecordSize; remainder != 0 {
-		if err := file.Truncate(size - remainder); err != nil {
-			return fmt.Errorf("repair incomplete player count record: %w", err)
-		}
-	}
 
 	var record [playerCountRecordSize]byte
 	binary.LittleEndian.PutUint64(record[0:8], uint64(point.Time))
@@ -72,7 +65,10 @@ func (s *PlayerCountStore) append(point PlayerCountPoint) error {
 	if written != len(record) {
 		return fmt.Errorf("append player count record: short write (%d/%d)", written, len(record))
 	}
-	return file.Sync()
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync player count data: %w", err)
+	}
+	return nil
 }
 
 func (s *PlayerCountStore) read(maxPoints int) (PlayerCountResponse, error) {
@@ -100,7 +96,7 @@ func (s *PlayerCountStore) read(maxPoints int) (PlayerCountResponse, error) {
 	size := info.Size() - info.Size()%playerCountRecordSize
 	total := size / playerCountRecordSize
 	if size == 0 {
-		return PlayerCountResponse{Points: []PlayerCountPoint{}, Total: total}, nil
+		return PlayerCountResponse{Points: []PlayerCountPoint{}, Total: 0}, nil
 	}
 
 	stride := int64(1)
@@ -123,25 +119,65 @@ func (s *PlayerCountStore) read(maxPoints int) (PlayerCountResponse, error) {
 	return PlayerCountResponse{Points: points, Total: total}, nil
 }
 
-func (s *PlayerCountStore) collect(root string) error {
-	path := filepath.Join(root, "run", "server.health")
-	data, err := os.ReadFile(path)
+func (s *PlayerCountStore) sample() (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, err := os.Stat(s.stdinPath); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("check Minecraft input channel: %w", err)
+	}
+	info, err := os.Stat(s.healthPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return false, nil
 		}
-		return fmt.Errorf("read server health log: %w", err)
+		return false, fmt.Errorf("stat player count health log: %w", err)
+	}
+	offset := info.Size()
+
+	stdin, err := os.OpenFile(s.stdinPath, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ENXIO) || errors.Is(err, syscall.ENOENT) {
+			return false, nil
+		}
+		return false, fmt.Errorf("open Minecraft input channel: %w", err)
+	}
+	_, writeErr := io.WriteString(stdin, "list\n")
+	closeErr := stdin.Close()
+	if writeErr != nil {
+		return false, fmt.Errorf("request player count: %w", writeErr)
+	}
+	if closeErr != nil {
+		return false, fmt.Errorf("close Minecraft input channel: %w", closeErr)
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	for index := len(lines) - 1; index >= 0; index-- {
-		count, ok := parsePlayerCount(lines[index])
-		if !ok {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(s.healthPath)
+		if err != nil {
+			return false, fmt.Errorf("read player count health log: %w", err)
+		}
+		if int64(len(data)) <= offset {
+			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		return s.append(PlayerCountPoint{Time: time.Now().Unix(), Count: count})
+
+		for _, line := range strings.Split(string(data[offset:]), "\n") {
+			count, ok := parsePlayerCount(line)
+			if !ok {
+				continue
+			}
+			if err := s.append(PlayerCountPoint{Time: time.Now().Unix(), Count: count}); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	return nil
+	return false, nil
 }
 
 func parsePlayerCount(line string) (uint16, bool) {
@@ -164,21 +200,38 @@ func parsePlayerCount(line string) (uint16, bool) {
 	return uint16(count), true
 }
 
-func startPlayerCountRecorder(root string) *PlayerCountStore {
-	store := newPlayerCountStore(root)
+func startPlayerCountRecorder(store *PlayerCountStore) {
 	go func() {
 		ticker := time.NewTicker(playerCountSampleRate)
 		defer ticker.Stop()
-		for {
-			if err := store.collect(root); err != nil {
+		for range ticker.C {
+			if _, err := store.sample(); err != nil {
 				fmt.Printf("player count recorder: %v\n", err)
 			}
-			<-ticker.C
 		}
 	}()
-	return store
 }
 
-func writePlayerCountJSON(w interface{ Header() map[string][]string; Write([]byte) (int, error) }, value PlayerCountResponse) error {
-	return json.NewEncoder(w).Encode(value)
+func (s *PlayerCountStore) handle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	maxPoints := playerCountMaxPoints
+	if raw := r.URL.Query().Get("points"); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil && value > 0 && value <= playerCountMaxPoints {
+			maxPoints = value
+		}
+	}
+
+	response, err := s.read(maxPoints)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		return
+	}
 }
