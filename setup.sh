@@ -24,6 +24,8 @@ parse_list() {
     local list="$1"
     local line line_number=0
     local destination_set=0
+    local destination_re='^destination[[:space:]]+"([^"]+)"$'
+    local entry_re='^([^[:space:]()]+)[[:space:]]+\((https?://[^)]+)\)$'
 
     LIST_DESTINATION=""
     LIST_NAMES=()
@@ -44,7 +46,7 @@ parse_list() {
         [[ -n "$line" ]] || continue
 
         if [ "$destination_set" -eq 0 ]; then
-            if [[ $line =~ ^destination[[:space:]]+\"([^\"]+)\"$ ]]; then
+            if [[ $line =~ $destination_re ]]; then
                 LIST_DESTINATION="${BASH_REMATCH[1]}"
                 destination_set=1
             else
@@ -54,7 +56,7 @@ parse_list() {
             continue
         fi
 
-        if [[ ! "$line" =~ ^([^[:space:]()]+)[[:space:]]+\((https?://[^)]+)\)$ ]]; then
+        if [[ ! $line =~ $entry_re ]]; then
             echo "$list:$line_number: expected: file.extension (direct-download-link)" >&2
             return 1
         fi
