@@ -30,7 +30,6 @@ eula.txt
 # World runtime data
 world/*
 !world/
-!world/datapacks/
 
 # Temporary world data
 datapacks_temp/
