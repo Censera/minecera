@@ -1,98 +1,154 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PLUGINS_DIR="plugins"
-DATAPACKS_DIR="world/datapacks"
-RESOURCEPACKS_DIR="resourcepacks"
-FORCEPACK_DIR="$PLUGINS_DIR/ForcePack"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+USER_AGENT="Minecera/1.0 (https://github.com/Censera/minecera)"
+LISTS=(
+    "$ROOT/datapacks.list"
+    "$ROOT/plugins.list"
+    "$ROOT/resources.list"
+    "$ROOT/mcpacks.list"
+    "$ROOT/paper.list"
+)
 
-mkdir -p "$PLUGINS_DIR" "$DATAPACKS_DIR" "$RESOURCEPACKS_DIR"
+LIST_DESTINATION=""
+LIST_NAMES=()
+LIST_URLS=()
 
-clean_managed_files() {
+report() {
+    printf '[%s] %s\n' "$(date '+%F %T')" "$*"
+}
+
+parse_list() {
     local list="$1"
-    local destination="$2"
-    local extension="$3"
-    local line name url pattern file
-    declare -A wanted=()
+    local line line_number=0
+    local destination_set=0
 
-    [[ -f "$list" ]] || return 0
-    pattern='^(.+)[[:space:]]\((https?://[^)]*)\)$'
+    LIST_DESTINATION=""
+    LIST_NAMES=()
+    LIST_URLS=()
+
+    [[ -f "$list" ]] || {
+        echo "missing list: $list" >&2
+        return 1
+    }
 
     while IFS= read -r line || [ -n "$line" ]; do
-        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ "$line" =~ $pattern ]] || {
-            echo "invalid entry in $list: $line" >&2
+        line_number=$((line_number + 1))
+        line="${line%$'\r'}"
+        line="${line%%#*}"
+        line="${line##+([[:space:]])}"
+        line="${line%%+([[:space:]])}"
+
+        [[ -n "$line" ]] || continue
+
+        if [ "$destination_set" -eq 0 ]; then
+            if [[ "$line" =~ ^destination[[:space:]]+"([^"]+)"$ ]]; then
+                LIST_DESTINATION="${BASH_REMATCH[1]}"
+                destination_set=1
+            else
+                echo "$list:$line_number: expected: destination \"to/path\"" >&2
+                return 1
+            fi
+            continue
+        fi
+
+        if [[ ! "$line" =~ ^([^[:space:]()]+)[[:space:]]+\((https?://[^)]+)\)$ ]]; then
+            echo "$list:$line_number: expected: file.extension (direct-download-link)" >&2
             return 1
-        }
-        name="${BASH_REMATCH[1]}"
-        wanted["$name"]=1
+        fi
+
+        LIST_NAMES+=("${BASH_REMATCH[1]}")
+        LIST_URLS+=("${BASH_REMATCH[2]}")
     done < "$list"
 
-    while IFS= read -r -d '' file; do
-        name="$(basename -- "$file")"
-        [[ -n "${wanted[$name]+x}" ]] || rm -f -- "$file"
-    done < <(find "$destination" -maxdepth 1 -type f -name "*.$extension" -print0)
+    [ "$destination_set" -eq 1 ] || {
+        echo "$list: missing destination declaration" >&2
+        return 1
+    }
+
+    case "$LIST_DESTINATION" in
+        /*|..|../*|*/../*|*/..)
+            echo "$list: destination must stay inside Minecera" >&2
+            return 1
+            ;;
+    esac
+
+    mkdir -p "$ROOT/$LIST_DESTINATION"
+}
+
+clean_list() {
+    local destination="$ROOT/$LIST_DESTINATION"
+    local name extension file
+    declare -A wanted=()
+    declare -A extensions=()
+
+    for name in "${LIST_NAMES[@]}"; do
+        wanted["$name"]=1
+        extension="${name##*.}"
+        extensions["$extension"]=1
+    done
+
+    for extension in "${!extensions[@]}"; do
+        while IFS= read -r -d '' file; do
+            name="$(basename -- "$file")"
+            if [[ -z "${wanted[$name]+x}" ]]; then
+                rm -f -- "$file"
+                report "removed stale $LIST_DESTINATION/$name"
+            fi
+        done < <(find "$destination" -maxdepth 1 -type f -name "*.$extension" -print0)
+    done
 }
 
 download_list() {
     local list="$1"
-    local destination="$2"
-    local line name url tmp pattern
+    local destination="$ROOT/$LIST_DESTINATION"
+    local index name url temp
 
-    [[ -f "$list" ]] || return 0
-    pattern='^(.+)[[:space:]]\((https?://[^)]*)\)$'
-
-    while IFS= read -r line || [ -n "$line" ]; do
-        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-
-        if [[ ! "$line" =~ $pattern ]]; then
-            echo "invalid entry in $list: $line" >&2
-            return 1
-        fi
-
-        name="${BASH_REMATCH[1]}"
-        url="${BASH_REMATCH[2]}"
-        tmp="$destination/.${name}.part"
+    for index in "${!LIST_NAMES[@]}"; do
+        name="${LIST_NAMES[$index]}"
+        url="${LIST_URLS[$index]}"
+        temp="$destination/.${name}.part"
 
         printf '  %-40s' "$name"
-        rm -f -- "$tmp"
+        rm -f -- "$temp"
 
         if curl --fail --silent --show-error --location \
             --retry 5 --retry-delay 1 --retry-all-errors \
             --connect-timeout 15 --max-time 300 \
-            --output "$tmp" -- "$url"; then
-            if [[ ! -s "$tmp" ]]; then
-                rm -f -- "$tmp"
+            --user-agent "$USER_AGENT" \
+            --output "$temp" -- "$url"; then
+            if [[ ! -s "$temp" ]]; then
+                rm -f -- "$temp"
                 echo "FAILED (empty response)" >&2
                 return 1
             fi
-            mv -f -- "$tmp" "$destination/$name"
+            mv -f -- "$temp" "$destination/$name"
             echo "ok"
         else
-            rm -f -- "$tmp"
+            rm -f -- "$temp"
             echo "FAILED" >&2
             echo "    $url" >&2
             return 1
         fi
-    done < "$list"
+    done
 }
 
 generate_forcepack_config() {
-    local list="$RESOURCEPACKS_DIR/resourcepacks.list"
-    local config tmp line name url clean_url hash pattern
+    local destination="$LIST_DESTINATION"
+    local config="$ROOT/plugins/ForcePack/config.yml"
+    local temp="$ROOT/plugins/ForcePack/.config.yml.part"
+    local index name url clean_url hash
 
-    [[ -f "$list" ]] || return 0
-    [[ -f "$PLUGINS_DIR/ForcePack.jar" ]] || return 0
+    [ "$destination" = "resourcepacks" ] || return 0
+    [ -f "$ROOT/plugins/ForcePack.jar" ] || return 0
 
-    mkdir -p "$FORCEPACK_DIR"
-    config="$FORCEPACK_DIR/config.yml"
-    tmp="$FORCEPACK_DIR/.config.yml.part"
-    pattern='^(.+)[[:space:]]\((https?://[^)]*)\)$'
+    mkdir -p "$ROOT/plugins/ForcePack"
 
     {
         cat <<'EOF'
 # Generated by Minecera setup.sh.
-# Source of truth: resourcepacks/resourcepacks.list
+# Source of truth: resources.list
 velocity-mode: false
 prevent-movement: false
 prevent-damage: false
@@ -115,38 +171,29 @@ Server:
       urls:
 EOF
 
-        while IFS= read -r line || [ -n "$line" ]; do
-            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ "$line" =~ $pattern ]] || {
-                echo "invalid entry in $list: $line" >&2
-                return 1
-            }
-
-            name="${BASH_REMATCH[1]}"
-            url="${BASH_REMATCH[2]}"
+        for index in "${!LIST_NAMES[@]}"; do
+            name="${LIST_NAMES[$index]}"
+            url="${LIST_URLS[$index]}"
             clean_url="${url%%\?*}"
 
-            [[ -f "$RESOURCEPACKS_DIR/$name" ]] || {
-                echo "missing downloaded resource pack: $RESOURCEPACKS_DIR/$name" >&2
+            [ -f "$ROOT/$destination/$name" ] || {
+                echo "missing downloaded resource pack: $ROOT/$destination/$name" >&2
                 return 1
             }
 
             printf '        - "%s"\n' "$clean_url"
-        done < "$list"
+        done
 
         cat <<'EOF'
       generate-hash: false
       hashes:
 EOF
 
-        while IFS= read -r line || [ -n "$line" ]; do
-            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
-            [[ "$line" =~ $pattern ]] || return 1
-
-            name="${BASH_REMATCH[1]}"
-            hash="$(sha1sum -- "$RESOURCEPACKS_DIR/$name" | cut -d ' ' -f1 | tr '[:lower:]' '[:upper:]')"
+        for index in "${!LIST_NAMES[@]}"; do
+            name="${LIST_NAMES[$index]}"
+            hash="$(sha1sum -- "$ROOT/$destination/$name" | cut -d ' ' -f1 | tr '[:lower:]' '[:upper:]')"
             printf '        - "%s"\n' "$hash"
-        done < "$list"
+        done
 
         cat <<'EOF'
   Actions:
@@ -180,27 +227,21 @@ EOF
   bypass-permission: false
   debug: false
 EOF
-    } > "$tmp"
+    } > "$temp"
 
-    mv -f -- "$tmp" "$config"
-    echo "ForcePack config generated with deterministic pack order."
+    mv -f -- "$temp" "$config"
+    report "ForcePack config generated"
 }
 
-echo "Cleaning plugins..."
-clean_managed_files "$PLUGINS_DIR/plugin.list" "$PLUGINS_DIR" jar
-echo "Downloading plugins..."
-download_list "$PLUGINS_DIR/plugin.list" "$PLUGINS_DIR"
-echo
-echo "Cleaning datapacks..."
-clean_managed_files "$DATAPACKS_DIR/datapacks.list" "$DATAPACKS_DIR" zip
-echo "Downloading datapacks..."
-download_list "$DATAPACKS_DIR/datapacks.list" "$DATAPACKS_DIR"
-echo
-echo "Cleaning resource packs..."
-clean_managed_files "$RESOURCEPACKS_DIR/resourcepacks.list" "$RESOURCEPACKS_DIR" zip
-echo "Downloading resource packs..."
-download_list "$RESOURCEPACKS_DIR/resourcepacks.list" "$RESOURCEPACKS_DIR"
-echo
-generate_forcepack_config
-echo
-echo "Setup complete."
+for list in "${LISTS[@]}"; do
+    report "processing $(basename "$list")"
+    parse_list "$list"
+    clean_list
+    download_list "$list"
+    if [ "$(basename "$list")" = "resources.list" ]; then
+        generate_forcepack_config
+    fi
+    echo
+done
+
+report "Setup complete."
