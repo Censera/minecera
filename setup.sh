@@ -44,7 +44,7 @@ parse_list() {
         [[ -n "$line" ]] || continue
 
         if [ "$destination_set" -eq 0 ]; then
-            if [[ "$line" =~ ^destination[[:space:]]+"([^"]+)"$ ]]; then
+            if [[ $line =~ ^destination[[:space:]]+\"([^\"]+)\"$ ]]; then
                 LIST_DESTINATION="${BASH_REMATCH[1]}"
                 destination_set=1
             else
