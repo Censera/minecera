@@ -1,12 +1,12 @@
 # --------------------------------
 # Geyser Configuration File
-# 
+#
 # A bridge between Minecraft: Bedrock Edition and Minecraft: Java Edition.
-# 
+#
 # GitHub: https://github.com/GeyserMC/Geyser
 # Discord: https://discord.gg/geysermc
 # Wiki: https://geysermc.org/wiki
-# 
+#
 # NOTICE: See https://geysermc.org/wiki/geyser/setup/ for the setup guide. Many video tutorials are outdated.
 # In most cases, especially with server hosting providers, further hosting-specific configuration is required.
 # --------------------------------
@@ -106,7 +106,7 @@ gameplay:
   # Force clients to load all resource packs if there are any.
   # If set to false, it allows the user to connect to the server even if they don't
   # want to download the resource packs.
-  force-resource-packs: true
+  force-resource-packs: false
 
   # Whether to automatically serve a resource pack that is required for some Geyser features to all connecting Bedrock players.
   # If enabled, force-resource-packs will be enabled.
