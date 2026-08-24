@@ -5,6 +5,11 @@ cache/
 libraries/
 .paper/
 
+# Managed downloads
+plugins/*.jar
+resourcepacks/*.zip
+mcpacks/*
+
 # Runtime
 logs/
 debug/
@@ -25,15 +30,10 @@ eula.txt
 # World runtime data
 world/*
 !world/
-world/datapacks/*
 !world/datapacks/
-!world/datapacks/datapacks.list
 
 # Temporary world data
 datapacks_temp/
-
-# Plugin binaries
-plugins/*.jar
 
 # Plugin runtime data
 plugins/floodgate/key.pem
@@ -44,9 +44,6 @@ plugins/Geyser-Spigot/extensions/
 plugins/Geyser-Spigot/custom_mappings/
 plugins/spark/tmp/
 
-# Downloaded resource packs
-resourcepacks/*.zip
-
 # Named-Villagers local configuration and API key
 plugins/Named-Villagers/config.yml
 
@@ -56,5 +53,5 @@ plugins/GuestMode/accounts.yml
 # Minecera web credentials
 run/web.credentials
 
-# Motd data
+# MOTD data
 motd/data.motd
