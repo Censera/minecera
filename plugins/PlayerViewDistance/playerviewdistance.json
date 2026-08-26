@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 2,
+  "minViewDistance": 2,
+  "maxViewDistance": 32,
+  "governorProfile": "BALANCED",
+  "telemetryIntervalSeconds": 60
+}

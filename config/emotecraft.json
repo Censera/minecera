@@ -1,0 +1,8 @@
+{
+  "config_version": 5,
+  "validate": false,
+  "emotesFolderOnLogicalServer": true,
+  "emotesDirectory": "emotes",
+  "loadbuiltin": true,
+  "quark": false
+}

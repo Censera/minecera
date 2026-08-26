@@ -1,0 +1,48 @@
+config-version: 1
+integrated-server-render-distance: -1
+global:
+  enabled: true
+  chunk-generation-limit: 3
+  chunk-send-limit: 3
+dimensions:
+  defaults:
+    enabled: true
+    chunk-generation-limit: 2
+    chunk-queue-size: 16
+    view-distance: 32
+    cache-duration: PT5M
+    anti-xray:
+      enabled: false
+      engine-mode: HIDE
+      hidden-blocks:
+      - minecraft:stone
+      - minecraft:deepslate
+      - minecraft:netherrack
+      - minecraft:end_stone
+      - minecraft:diamond_ore
+      - minecraft:deepslate_diamond_ore
+      - minecraft:iron_ore
+      - minecraft:deepslate_iron_ore
+      - minecraft:coal_ore
+      - minecraft:deepslate_coal_ore
+      - minecraft:emerald_ore
+      - minecraft:deepslate_emerald_ore
+      - minecraft:copper_ore
+      - minecraft:deepslate_copper_ore
+      - minecraft:redstone_ore
+      - minecraft:deepslate_redstone_ore
+      - minecraft:gold_ore
+      - minecraft:deepslate_gold_ore
+      - minecraft:lapis_ore
+      - minecraft:deepslate_lapis_ore
+      - minecraft:nether_gold_ore
+      - minecraft:nether_quartz_ore
+      - minecraft:ancient_debris
+      - minecraft:raw_copper_block
+      - minecraft:raw_iron_block
+    chunk-batches:
+      enabled: true
+      chunks-per-batch: 12
+      prepare-chunks-while-waiting: true
+      batch-timeout: PT5S
+      batch-wait-timeout: PT30S
