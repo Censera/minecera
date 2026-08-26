@@ -9,6 +9,7 @@ libraries/
 plugins/*.jar
 resourcepacks/*.zip
 mcpacks/*
+minecera-web
 
 # Runtime
 logs/
