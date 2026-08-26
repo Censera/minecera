@@ -80,6 +80,46 @@ parse_list() {
     mkdir -p "$ROOT/$LIST_DESTINATION"
 }
 
+disable_unused_list() {
+    local list="$1"
+    local line destination=""
+    local destination_re='^destination[[:space:]]+"([^"]+)"$'
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        line="${line%$'\r'}"
+        line="${line%%#*}"
+        line="${line##+([[:space:]])}"
+        line="${line%%+([[:space:]])}"
+
+        [[ -n "$line" ]] || continue
+
+        if [[ $line =~ $destination_re ]]; then
+            destination="${BASH_REMATCH[1]}"
+            break
+        fi
+    done < "$list"
+
+    [ -n "$destination" ] || {
+        report "disabled $(basename "$list"): no destination"
+        return 0
+    }
+
+    case "$destination" in
+        /*|..|../*|*/../*|*/..)
+            echo "$list: destination must stay inside Minecera" >&2
+            return 1
+            ;;
+    esac
+
+    local path="$ROOT/$destination"
+    if [ -d "$path" ]; then
+        find "$path" -maxdepth 1 -type f -delete
+        report "disabled $(basename "$list") and removed files from $destination"
+    else
+        report "disabled $(basename "$list"): $destination already absent"
+    fi
+}
+
 clean_list() {
     local destination="$ROOT/$LIST_DESTINATION"
     local name extension file
@@ -237,6 +277,11 @@ EOF
 }
 
 for list in "${LISTS[@]}"; do
+    if [ -f "$list.unused" ]; then
+        disable_unused_list "$list.unused"
+        continue
+    fi
+
     report "processing $(basename "$list")"
     parse_list "$list"
     clean_list
