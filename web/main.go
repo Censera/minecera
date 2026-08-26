@@ -26,7 +26,7 @@ const (
 	defaultRoot = "/home/censera/minecraft"
 	listenAddr  = "127.0.0.1:8080"
 	statusEvery = 5
-	logLines    = 20000
+	logLines    = 500
 	webUser     = "censera"
 )
 
@@ -53,7 +53,7 @@ type Status struct {
 
 type Snapshot struct {
 	Status Status   `json:"status"`
-	Logs   []string `json:"logs"`
+	Logs   []string `json:"logs,omitempty"`
 }
 
 func main() {
@@ -162,6 +162,8 @@ func (a *App) handleLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.logs(lines))
 }
 
+// The event stream intentionally contains status only. Sending the whole log on
+// every tick was the main source of unnecessary bandwidth and disk I/O.
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -175,8 +177,7 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	status := a.status()
-	logs := a.logs(logLines)
-	if err := writeEvent(w, Snapshot{Status: status, Logs: logs}); err != nil {
+	if err := writeEvent(w, Snapshot{Status: status}); err != nil {
 		return
 	}
 	flusher.Flush()
@@ -190,10 +191,9 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 			counter++
 			if counter >= statusEvery {
 				status = a.status()
-				logs = a.logs(logLines)
 				counter = 0
 			}
-			if err := writeEvent(w, Snapshot{Status: status, Logs: logs}); err != nil {
+			if err := writeEvent(w, Snapshot{Status: status}); err != nil {
 				return
 			}
 			flusher.Flush()
@@ -373,11 +373,17 @@ func (a *App) logs(lines int) []string {
 	if len(logs) == 0 { return []string{"no readable Minecraft server log exists"} }
 	sort.Slice(logs, func(i, j int) bool { return logs[i].mod.After(logs[j].mod) })
 
-	data, err := os.ReadFile(logs[0].path)
+	data, err := tailFile(logs[0].path, lines)
 	if err != nil { return []string{"cannot read Minecraft log: " + err.Error()} }
+	return splitLines(data)
+}
+
+func tailFile(path string, lines int) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil { return "", err }
 	all := splitLines(string(data))
 	if len(all) > lines { all = all[len(all)-lines:] }
-	return all
+	return strings.Join(all, "\n"), nil
 }
 
 func splitLines(s string) []string {
