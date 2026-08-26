@@ -9,7 +9,7 @@ dimensions:
     enabled: true
     chunk-generation-limit: 2
     chunk-queue-size: 16
-    view-distance: 32
+    view-distance: 12
     cache-duration: PT5M
     anti-xray:
       enabled: false
