@@ -226,7 +226,7 @@ EOF
   verify: true
   resend: true
   force-invalid-size: false
-  geyser: true
+  geyser: false
   bypass-permission: false
   debug: false
 EOF
