@@ -45,9 +45,13 @@ plugins/spark/tmp/
 
 # Named-Villagers local configuration and API key
 plugins/Named-Villagers/config.yml
+config/emotecraft.json
 
 # GuestMode account database
-plugins/Eyes/accounts.yml
+plugins/GuestMode/accounts.yml
+plugins/PlayerViewDistance/*.json
+plugins/SkinsRestorer/players/
+plugins/SkinsRestorer/skins/
 
 # Minecera web credentials
 run/web.credentials
