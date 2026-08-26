@@ -47,7 +47,7 @@ plugins/spark/tmp/
 plugins/Named-Villagers/config.yml
 
 # GuestMode account database
-plugins/GuestMode/accounts.yml
+plugins/Eyes/accounts.yml
 
 # Minecera web credentials
 run/web.credentials
