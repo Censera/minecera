@@ -4,13 +4,6 @@ shopt -s extglob
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_AGENT="Minecera/1.0 (https://github.com/Censera/minecera)"
-LISTS=(
-    "$ROOT/lists/datapacks.list"
-    "$ROOT/lists/plugins.list"
-    "$ROOT/lists/resources.list"
-    "$ROOT/lists/packs.list"
-    "$ROOT/lists/paper.list"
-)
 
 LIST_DESTINATION=""
 LIST_NAMES=()
@@ -18,6 +11,19 @@ LIST_URLS=()
 
 report() {
     printf '[%s] %s\n' "$(date '+%F %T')" "$*"
+}
+
+discover_lists() {
+    mapfile -d '' LISTS < <(
+        find "$ROOT/lists" -maxdepth 1 -type f \
+            \( -name '*.list' -o -name '*.list.unused' \) \
+            -print0 | sort -z
+    )
+
+    if [ "${#LISTS[@]}" -eq 0 ]; then
+        echo "no list manifests found in $ROOT/lists" >&2
+        return 1
+    fi
 }
 
 parse_list() {
@@ -276,9 +282,16 @@ EOF
     report "ForcePack config generated"
 }
 
+discover_lists
+
 for list in "${LISTS[@]}"; do
-    if [ -f "$list.unused" ]; then
-        disable_unused_list "$list.unused"
+    if [[ "$list" == *.list.unused ]]; then
+        active_list="${list%.unused}"
+        if [ -f "$active_list" ]; then
+            report "ignoring backup $(basename "$list"): active manifest exists"
+        else
+            disable_unused_list "$list"
+        fi
         continue
     fi
 
@@ -286,7 +299,7 @@ for list in "${LISTS[@]}"; do
     parse_list "$list"
     clean_list
     download_list "$list"
-    if [ "$(basename "$list")" = "resources.list" ]; then
+    if [ "$LIST_DESTINATION" = "resourcepacks" ]; then
         generate_forcepack_config
     fi
     echo
