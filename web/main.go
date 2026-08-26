@@ -22,6 +22,9 @@ import (
 //go:embed index.html
 var autoHTML []byte
 
+//go:embed optimization.js
+var optimizationJS []byte
+
 const (
 	defaultRoot = "/home/censera/minecraft"
 	listenAddr  = "127.0.0.1:8080"
@@ -71,6 +74,7 @@ func main() {
 	app := &App{root: root, password: password, playerCount: playerCount}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
+	mux.HandleFunc("/optimization.js", app.handleOptimizationJS)
 	mux.HandleFunc("/api/status", app.handleStatus)
 	mux.HandleFunc("/api/logs", app.handleLogs)
 	mux.HandleFunc("/api/events", app.handleEvents)
@@ -148,6 +152,12 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(autoHTML)
 }
 
+func (a *App) handleOptimizationJS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	_, _ = w.Write(optimizationJS)
+}
+
 func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.snapshot(false))
 }
@@ -162,8 +172,6 @@ func (a *App) handleLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, a.logs(lines))
 }
 
-// The event stream intentionally contains status only. Sending the whole log on
-// every tick was the main source of unnecessary bandwidth and disk I/O.
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -373,17 +381,11 @@ func (a *App) logs(lines int) []string {
 	if len(logs) == 0 { return []string{"no readable Minecraft server log exists"} }
 	sort.Slice(logs, func(i, j int) bool { return logs[i].mod.After(logs[j].mod) })
 
-	data, err := tailFile(logs[0].path, lines)
+	data, err := os.ReadFile(logs[0].path)
 	if err != nil { return []string{"cannot read Minecraft log: " + err.Error()} }
-	return splitLines(data)
-}
-
-func tailFile(path string, lines int) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil { return "", err }
 	all := splitLines(string(data))
 	if len(all) > lines { all = all[len(all)-lines:] }
-	return strings.Join(all, "\n"), nil
+	return all
 }
 
 func splitLines(s string) []string {
