@@ -158,14 +158,14 @@ world-settings:
 messages:
   whitelist: You are not whitelisted on this server!
   unknown-command: Unknown command. Type "/help" for help.
-  server-full: The server is full!
+  server-full: The party is full!
   outdated-client: Outdated client! Please use {0}
   outdated-server: Outdated server! I'm still on {0}
   restart: Server is restarting
 advancements:
   disable-saving: false
   disabled:
-  - minecraft:story/disabled
+    - minecraft:story/disabled
 players:
   disable-saving: false
 config-version: 13
@@ -174,14 +174,14 @@ stats:
   forced-stats: {}
 commands:
   spam-exclusions:
-  - /skill
+    - /skill
   silent-commandblock-console: false
   replace-commands:
-  - setblock
-  - summon
-  - testforblock
-  - tellraw
-  log: true
+    - setblock
+    - summon
+    - testforblock
+    - tellraw
+  log: false
   tab-complete: 0
   send-namespaced: true
   enable-spam-exclusions: false
