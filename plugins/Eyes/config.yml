@@ -1,0 +1,13 @@
+# Eyes
+# Authentication protects player accounts. Guest restrictions protect the world.
+# Full access requires both authentication and server trust through whitelisting.
+
+guest-join-message: "&eWelcome, &f%player%&e. You are currently untrusted and restricted to Guest Mode."
+upgrade-message: "&aYou are authenticated and trusted. Full world access granted."
+broadcast-on-upgrade: ""
+guest-gamemode: SPECTATOR
+upgrade-gamemode: SURVIVAL
+
+two-factor-web-host: "127.0.0.1"
+two-factor-web-port: 0
+two-factor-web-expiry-seconds: 300
