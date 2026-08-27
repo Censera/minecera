@@ -16,6 +16,9 @@ logs/
 debug/
 crash-reports/
 
+# Regurally modified files
+server-icon.png
+
 # Supervisor runtime state
 backups/
 run/
