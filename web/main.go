@@ -8,11 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,6 +38,7 @@ type App struct {
 	root        string
 	password    string
 	playerCount *PlayerCountStore
+	logHub      *LogHub
 	mu          sync.Mutex
 }
 
@@ -56,7 +57,81 @@ type Status struct {
 }
 
 type Snapshot struct {
-	Status Status `json:"status"`
+	Status Status   `json:"status"`
+	Logs   []string `json:"logs,omitempty"`
+}
+
+type LogHub struct {
+	mu   sync.RWMutex
+	subs map[chan string]struct{}
+}
+
+func NewLogHub() *LogHub {
+	return &LogHub{subs: make(map[chan string]struct{})}
+}
+
+func (h *LogHub) Subscribe() chan string {
+	ch := make(chan string, 256)
+	h.mu.Lock()
+	h.subs[ch] = struct{}{}
+	h.mu.Unlock()
+	return ch
+}
+
+func (h *LogHub) Unsubscribe(ch chan string) {
+	h.mu.Lock()
+	if _, ok := h.subs[ch]; ok {
+		delete(h.subs, ch)
+		close(ch)
+	}
+	h.mu.Unlock()
+}
+
+func (h *LogHub) Publish(line string) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for ch := range h.subs {
+		select {
+		case ch <- line:
+		default:
+		}
+	}
+}
+
+func startLogFollower(root string, hub *LogHub) {
+	go func() {
+		var path string
+		for {
+			current := currentLogPath(root)
+			if current == "" {
+				time.Sleep(time.Second)
+				continue
+			}
+			if current != path {
+				path = current
+				cmd := exec.Command("tail", "-n", "0", "-F", path)
+				stdout, err := cmd.StdoutPipe()
+				if err != nil {
+					time.Sleep(time.Second)
+					continue
+				}
+				cmd.Stderr = io.Discard
+				if err := cmd.Start(); err != nil {
+					time.Sleep(time.Second)
+					continue
+				}
+				scanner := bufio.NewScanner(stdout)
+				scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+				for scanner.Scan() {
+					hub.Publish(scanner.Text())
+				}
+				_ = cmd.Wait()
+				path = ""
+				continue
+			}
+			time.Sleep(time.Second)
+		}
+	}()
 }
 
 func main() {
@@ -71,7 +146,9 @@ func main() {
 	}
 
 	playerCount := newPlayerCountStore(root)
-	app := &App{root: root, password: password, playerCount: playerCount}
+	logHub := NewLogHub()
+	startLogFollower(root, logHub)
+	app := &App{root: root, password: password, playerCount: playerCount, logHub: logHub}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
 	mux.HandleFunc("/optimization.js", app.handleOptimizationJS)
@@ -189,91 +266,56 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	flusher.Flush()
 
-	logPath := a.currentLogPath()
-	file, reader := openLogTail(logPath)
-	if file != nil {
-		defer file.Close()
-	}
+	sub := a.logHub.Subscribe()
+	defer a.logHub.Unsubscribe(sub)
 
 	statusTicker := time.NewTicker(statusEvery)
-	pollTicker := time.NewTicker(250 * time.Millisecond)
+	batchTicker := time.NewTicker(100 * time.Millisecond)
 	keepaliveTicker := time.NewTicker(20 * time.Second)
 	defer statusTicker.Stop()
-	defer pollTicker.Stop()
+	defer batchTicker.Stop()
 	defer keepaliveTicker.Stop()
+
+	batch := make([]string, 0, 32)
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		if err := writeEvent(w, Snapshot{Logs: append([]string(nil), batch...)}); err != nil {
+			return err
+		}
+		batch = batch[:0]
+		flusher.Flush()
+		return nil
+	}
 
 	for {
 		select {
+		case line := <-sub:
+			batch = append(batch, line)
+			if len(batch) >= 32 {
+				if err := flush(); err != nil {
+					return
+				}
+			}
+		case <-batchTicker.C:
+			if err := flush(); err != nil {
+				return
+			}
 		case <-statusTicker.C:
 			if err := writeEvent(w, Snapshot{Status: a.status()}); err != nil {
 				return
 			}
 			flusher.Flush()
-
-		case <-pollTicker.C:
-			newPath := a.currentLogPath()
-			if newPath != logPath {
-				if file != nil {
-					_ = file.Close()
-				}
-				logPath = newPath
-				file, reader = openLogTail(logPath)
-			}
-
-			if reader == nil {
-				continue
-			}
-
-			for {
-				line, err := reader.ReadString('\n')
-				if len(line) > 0 {
-					line = strings.TrimRight(line, "\r\n")
-					if err == nil || errors.Is(err, bufio.ErrBufferFull) || errors.Is(err, os.ErrInvalid) {
-						if err := writeLogEvent(w, line); err != nil {
-							return
-						}
-						flusher.Flush()
-					}
-				}
-				if err != nil {
-					break
-				}
-			}
-
 		case <-keepaliveTicker.C:
 			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
 				return
 			}
 			flusher.Flush()
-
 		case <-r.Context().Done():
 			return
 		}
 	}
-}
-
-func openLogTail(path string) (*os.File, *bufio.Reader) {
-	if path == "" {
-		return nil, nil
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, nil
-	}
-	if _, err := file.Seek(0, 2); err != nil {
-		_ = file.Close()
-		return nil, nil
-	}
-	return file, bufio.NewReaderSize(file, 64*1024)
-}
-
-func writeLogEvent(w http.ResponseWriter, line string) error {
-	data, err := json.Marshal(line)
-	if err != nil {
-		return err
-	}
-	_, err = fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
-	return err
 }
 
 func (a *App) handleControl(w http.ResponseWriter, r *http.Request) {
@@ -366,37 +408,55 @@ func (a *App) status() Status {
 
 func findServerPID() int {
 	out, err := exec.Command("pgrep", "-f", `(^|/)java .*paper-26\.2\.jar`).Output()
-	if err != nil { return 0 }
+	if err != nil {
+		return 0
+	}
 	for _, line := range strings.Fields(string(out)) {
-		if pid, err := strconv.Atoi(line); err == nil { return pid }
+		if pid, err := strconv.Atoi(line); err == nil {
+			return pid
+		}
 	}
 	return 0
 }
 
 func processStats(pid int) (string, string, string) {
 	out, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "etime=,%cpu=,rss=").Output()
-	if err != nil { return "-", "-", "-" }
+	if err != nil {
+		return "-", "-", "-"
+	}
 	fields := strings.Fields(string(out))
-	if len(fields) < 3 { return "-", "-", "-" }
+	if len(fields) < 3 {
+		return "-", "-", "-"
+	}
 	rss, _ := strconv.ParseFloat(fields[2], 64)
 	return fields[0], fields[1] + "%", fmt.Sprintf("%.1fG", rss/1024/1024)
 }
 
 func readLoad() string {
 	data, err := os.ReadFile("/proc/loadavg")
-	if err != nil { return "-" }
+	if err != nil {
+		return "-"
+	}
 	fields := strings.Fields(string(data))
-	if len(fields) < 3 { return "-" }
+	if len(fields) < 3 {
+		return "-"
+	}
 	return strings.Join(fields[:3], " ")
 }
 
 func diskUsage(root string) string {
 	out, err := exec.Command("df", "-h", root).Output()
-	if err != nil { return "-" }
+	if err != nil {
+		return "-"
+	}
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) < 2 { return "-" }
+	if len(lines) < 2 {
+		return "-"
+	}
 	fields := strings.Fields(lines[len(lines)-1])
-	if len(fields) < 5 { return "-" }
+	if len(fields) < 5 {
+		return "-"
+	}
 	return fmt.Sprintf("%s/%s (%s)", fields[2], fields[1], fields[4])
 }
 
@@ -407,29 +467,41 @@ func backupCount(root string) int {
 
 func latestBackup(root string) string {
 	entries, err := os.ReadDir(filepath.Join(root, "backups"))
-	if err != nil { return "-" }
+	if err != nil {
+		return "-"
+	}
 	best := ""
 	for _, entry := range entries {
-		if !entry.IsDir() || best >= entry.Name() { continue }
-		if _, err := os.Stat(filepath.Join(root, "backups", entry.Name(), "HEALTHY")); err == nil { best = entry.Name() }
+		if !entry.IsDir() || best >= entry.Name() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, "backups", entry.Name(), "HEALTHY")); err == nil {
+			best = entry.Name()
+		}
 	}
-	if best == "" { return "-" }
+	if best == "" {
+		return "-"
+	}
 	return best
 }
 
 func latestJournalEvent() string {
 	out, err := exec.Command("journalctl", "-u", "minecera.service", "-n", "1", "-o", "cat", "--no-pager").Output()
-	if err != nil { return "journal unavailable" }
+	if err != nil {
+		return "journal unavailable"
+	}
 	return strings.TrimSpace(string(out))
 }
 
-func (a *App) currentLogPath() string {
-	files, _ := filepath.Glob(filepath.Join(a.root, "logs", "server-*.log"))
+func currentLogPath(root string) string {
+	files, _ := filepath.Glob(filepath.Join(root, "logs", "server-*.log"))
 	var newest string
 	var newestMod time.Time
 	for _, path := range files {
 		info, err := os.Stat(path)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		if newest == "" || info.ModTime().After(newestMod) {
 			newest = path
 			newestMod = info.ModTime()
@@ -439,19 +511,27 @@ func (a *App) currentLogPath() string {
 }
 
 func (a *App) logs(lines int) []string {
-	path := a.currentLogPath()
-	if path == "" { return []string{"no Minecraft server log exists"} }
+	path := currentLogPath(a.root)
+	if path == "" {
+		return []string{"no Minecraft server log exists"}
+	}
 	data, err := os.ReadFile(path)
-	if err != nil { return []string{"cannot read Minecraft log: " + err.Error()} }
+	if err != nil {
+		return []string{"cannot read Minecraft log: " + err.Error()}
+	}
 	all := splitLines(string(data))
-	if len(all) > lines { all = all[len(all)-lines:] }
+	if len(all) > lines {
+		all = all[len(all)-lines:]
+	}
 	return all
 }
 
 func splitLines(s string) []string {
 	s = strings.ReplaceAll(s, "\r", "")
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
-	if len(lines) == 1 && lines[0] == "" { return nil }
+	if len(lines) == 1 && lines[0] == "" {
+		return nil
+	}
 	return lines
 }
 
@@ -462,7 +542,9 @@ func writeJSON(w http.ResponseWriter, value any) {
 
 func writeEvent(w http.ResponseWriter, value any) error {
 	data, err := json.Marshal(value)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	_, err = fmt.Fprintf(w, "event: snapshot\ndata: %s\n\n", data)
 	return err
 }
