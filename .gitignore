@@ -18,6 +18,7 @@ crash-reports/
 
 # Regurally modified files
 server-icon.png
+server.properties
 
 # Supervisor runtime state
 backups/
