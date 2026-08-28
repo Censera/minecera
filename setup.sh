@@ -180,7 +180,7 @@ download_file() {
         --retry 5 --retry-delay 1 --retry-all-errors \
         --connect-timeout 15 --max-time 30 \
         --user-agent "$USER_AGENT" \
-        --head --time-cond "$target" -- "$url"; then
+        --head --time-cond "$target" -- "$url" >/dev/null 2>&1; then
         status "$name" "$GREEN" "Done"
         return 0
     fi
@@ -188,11 +188,10 @@ download_file() {
     if remote_download "$url" "$temp" && [ -s "$temp" ]; then
         if cmp -s "$temp" "$target"; then
             rm -f -- "$temp"
-            status "$name" "$GREEN" "Done"
         else
             mv -f -- "$temp" "$target"
-            status "$name" "$GREEN" "Done"
         fi
+        status "$name" "$GREEN" "Done"
         return 0
     fi
 
