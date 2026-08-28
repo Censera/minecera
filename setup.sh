@@ -6,8 +6,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_AGENT="Minecera/1.0 (https://github.com/Censera/minecera)"
 
 LIST_DESTINATION=""
-LIST_NAMES=()
-LIST_URLS=()
+INCLUDE_NAMES=()
+INCLUDE_URLS=()
+EXCLUDE_NAMES=()
 
 report() {
     printf '[%s] %s\n' "$(date '+%F %T')" "$*"
@@ -15,9 +16,7 @@ report() {
 
 discover_lists() {
     mapfile -d '' LISTS < <(
-        find "$ROOT/lists" -maxdepth 1 -type f \
-            \( -name '*.list' -o -name '*.list.unused' \) \
-            -print0 | sort -z
+        find "$ROOT/lists" -maxdepth 1 -type f -name '*.list' -print0 | sort -z
     )
 
     if [ "${#LISTS[@]}" -eq 0 ]; then
@@ -31,16 +30,13 @@ parse_list() {
     local line line_number=0
     local destination_set=0
     local destination_re='^destination[[:space:]]+"([^"]+)"$'
-    local entry_re='^([^()]+\.[^()[:space:]]+)[[:space:]]+\((https?://[^)]+)\)$'
+    local entry_re='^([+-])[[:space:]]+([^()]+\.[^()[:space:]]+)[[:space:]]+\((https?://[^)]+)\)$'
+    local action name url
 
     LIST_DESTINATION=""
-    LIST_NAMES=()
-    LIST_URLS=()
-
-    [[ -f "$list" ]] || {
-        echo "missing list: $list" >&2
-        return 1
-    }
+    INCLUDE_NAMES=()
+    INCLUDE_URLS=()
+    EXCLUDE_NAMES=()
 
     while IFS= read -r line || [ -n "$line" ]; do
         line_number=$((line_number + 1))
@@ -63,12 +59,20 @@ parse_list() {
         fi
 
         if [[ ! $line =~ $entry_re ]]; then
-            echo "$list:$line_number: expected: file.extension (direct-download-link)" >&2
+            echo "$list:$line_number: expected: + file.extension (direct-download-link) or - file.extension (direct-download-link)" >&2
             return 1
         fi
 
-        LIST_NAMES+=("${BASH_REMATCH[1]}")
-        LIST_URLS+=("${BASH_REMATCH[2]}")
+        action="${BASH_REMATCH[1]}"
+        name="${BASH_REMATCH[2]}"
+        url="${BASH_REMATCH[3]}"
+
+        if [ "$action" = "+" ]; then
+            INCLUDE_NAMES+=("$name")
+            INCLUDE_URLS+=("$url")
+        else
+            EXCLUDE_NAMES+=("$name")
+        fi
     done < "$list"
 
     [ "$destination_set" -eq 1 ] || {
@@ -86,77 +90,45 @@ parse_list() {
     mkdir -p "$ROOT/$LIST_DESTINATION"
 }
 
-disable_unused_list() {
-    local list="$1"
-    local line destination=""
-    local destination_re='^destination[[:space:]]+"([^"]+)"$'
-
-    while IFS= read -r line || [ -n "$line" ]; do
-        line="${line%$'\r'}"
-        line="${line%%#*}"
-        line="${line##+([[:space:]])}"
-        line="${line%%+([[:space:]])}"
-
-        [[ -n "$line" ]] || continue
-
-        if [[ $line =~ $destination_re ]]; then
-            destination="${BASH_REMATCH[1]}"
-            break
-        fi
-    done < "$list"
-
-    [ -n "$destination" ] || {
-        report "disabled $(basename "$list"): no destination"
-        return 0
-    }
-
-    case "$destination" in
-        /*|..|../*|*/../*|*/..)
-            echo "$list: destination must stay inside Minecera" >&2
-            return 1
-            ;;
-    esac
-
-    local path="$ROOT/$destination"
-    if [ -d "$path" ]; then
-        find "$path" -maxdepth 1 -type f -delete
-        report "disabled $(basename "$list") and removed files from $destination"
-    else
-        report "disabled $(basename "$list"): $destination already absent"
-    fi
-}
-
 clean_list() {
     local destination="$ROOT/$LIST_DESTINATION"
-    local name extension file
+    local index name file
     declare -A wanted=()
-    declare -A extensions=()
+    declare -A excluded=()
 
-    for name in "${LIST_NAMES[@]}"; do
+    for name in "${INCLUDE_NAMES[@]}"; do
         wanted["$name"]=1
-        extension="${name##*.}"
-        extensions["$extension"]=1
     done
 
-    for extension in "${!extensions[@]}"; do
-        while IFS= read -r -d '' file; do
-            name="$(basename -- "$file")"
-            if [[ -z "${wanted[$name]+x}" ]]; then
-                rm -f -- "$file"
-                report "removed stale $LIST_DESTINATION/$name"
-            fi
-        done < <(find "$destination" -maxdepth 1 -type f -name "*.$extension" -print0)
+    for name in "${EXCLUDE_NAMES[@]}"; do
+        excluded["$name"]=1
     done
+
+    for index in "${!EXCLUDE_NAMES[@]}"; do
+        name="${EXCLUDE_NAMES[$index]}"
+        file="$destination/$name"
+        if [ -f "$file" ]; then
+            rm -f -- "$file"
+            report "excluded $LIST_DESTINATION/$name"
+        fi
+    done
+
+    while IFS= read -r -d '' file; do
+        name="$(basename -- "$file")"
+        if [[ -z "${wanted[$name]+x}" && -z "${excluded[$name]+x}" ]]; then
+            rm -f -- "$file"
+            report "removed stale $LIST_DESTINATION/$name"
+        fi
+    done < <(find "$destination" -maxdepth 1 -type f -print0)
 }
 
 download_list() {
-    local list="$1"
     local destination="$ROOT/$LIST_DESTINATION"
     local index name url temp
 
-    for index in "${!LIST_NAMES[@]}"; do
-        name="${LIST_NAMES[$index]}"
-        url="${LIST_URLS[$index]}"
+    for index in "${!INCLUDE_NAMES[@]}"; do
+        name="${INCLUDE_NAMES[$index]}"
+        url="${INCLUDE_URLS[$index]}"
         temp="$destination/.${name}.part"
 
         printf '  %-40s' "$name"
@@ -220,9 +192,9 @@ Server:
       urls:
 EOF
 
-        for index in "${!LIST_NAMES[@]}"; do
-            name="${LIST_NAMES[$index]}"
-            url="${LIST_URLS[$index]}"
+        for index in "${!INCLUDE_NAMES[@]}"; do
+            name="${INCLUDE_NAMES[$index]}"
+            url="${INCLUDE_URLS[$index]}"
             clean_url="${url%%\?*}"
 
             [ -f "$ROOT/$destination/$name" ] || {
@@ -238,8 +210,8 @@ EOF
       hashes:
 EOF
 
-        for index in "${!LIST_NAMES[@]}"; do
-            name="${LIST_NAMES[$index]}"
+        for index in "${!INCLUDE_NAMES[@]}"; do
+            name="${INCLUDE_NAMES[$index]}"
             hash="$(sha1sum -- "$ROOT/$destination/$name" | cut -d ' ' -f1 | tr '[:lower:]' '[:upper:]')"
             printf '        - "%s"\n' "$hash"
         done
@@ -282,27 +254,20 @@ EOF
     report "ForcePack config generated"
 }
 
-discover_lists
-
-for list in "${LISTS[@]}"; do
-    if [[ "$list" == *.list.unused ]]; then
-        active_list="${list%.unused}"
-        if [ -f "$active_list" ]; then
-            report "ignoring backup $(basename "$list"): active manifest exists"
-        else
-            disable_unused_list "$list"
-        fi
-        continue
-    fi
-
+process_list() {
+    local list="$1"
     report "processing $(basename "$list")"
     parse_list "$list"
     clean_list
-    download_list "$list"
-    if [ "$LIST_DESTINATION" = "resourcepacks" ]; then
-        generate_forcepack_config
-    fi
+    download_list
+    generate_forcepack_config
     echo
+}
+
+discover_lists
+
+for list in "${LISTS[@]}"; do
+    process_list "$list"
 done
 
 report "Setup complete."
