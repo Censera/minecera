@@ -4,7 +4,6 @@ shopt -s extglob
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_AGENT="Minecera/1.0 (https://github.com/Censera/minecera)"
-STATE_DIR="$ROOT/run/setup"
 
 RESET='\033[0m'
 BOLD='\033[1m'
@@ -12,12 +11,12 @@ GREEN='\033[32m'
 RED='\033[31m'
 YELLOW='\033[33m'
 CYAN='\033[36m'
-DIM='\033[2m'
 
 LIST_DESTINATION=""
 INCLUDE_NAMES=()
 INCLUDE_URLS=()
 EXCLUDE_NAMES=()
+EXTENSIONS=()
 
 report() {
     printf '%b\n' "$*"
@@ -26,7 +25,8 @@ report() {
 status() {
     local label="$1"
     local color="$2"
-    printf '    %-36s [%b%s%b]\n' "$label" "$color" "${3:-}" "$RESET"
+    local result="$3"
+    printf '    %-36s [%b%s%b]\n' "$label" "$color" "$result" "$RESET"
 }
 
 discover_lists() {
@@ -46,12 +46,15 @@ parse_list() {
     local destination_set=0
     local destination_re='^destination[[:space:]]+"([^"]+)"$'
     local entry_re='^([+-])[[:space:]]+([^()]+\.[^()[:space:]]+)[[:space:]]+\((https?://[^)]+)\)$'
-    local action name url
+    local action name url extension
+    declare -A seen_names=()
+    declare -A seen_extensions=()
 
     LIST_DESTINATION=""
     INCLUDE_NAMES=()
     INCLUDE_URLS=()
     EXCLUDE_NAMES=()
+    EXTENSIONS=()
 
     while IFS= read -r line || [ -n "$line" ]; do
         line_number=$((line_number + 1))
@@ -81,6 +84,18 @@ parse_list() {
         action="${BASH_REMATCH[1]}"
         name="${BASH_REMATCH[2]}"
         url="${BASH_REMATCH[3]}"
+        extension="${name##*.}"
+
+        if [[ -n "${seen_names[$name]+x}" ]]; then
+            echo "$list:$line_number: duplicate entry: $name" >&2
+            return 1
+        fi
+        seen_names["$name"]=1
+
+        if [[ -z "${seen_extensions[$extension]+x}" ]]; then
+            EXTENSIONS+=("$extension")
+            seen_extensions["$extension"]=1
+        fi
 
         if [ "$action" = "+" ]; then
             INCLUDE_NAMES+=("$name")
@@ -105,91 +120,62 @@ parse_list() {
     mkdir -p "$ROOT/$LIST_DESTINATION"
 }
 
-state_file() {
-    local list="$1"
-    printf '%s/%s.managed\n' "$STATE_DIR" "$(basename "$list" .list)"
-}
-
 clean_list() {
     local destination="$ROOT/$LIST_DESTINATION"
-    local state="$2"
-    local name file extension
+    local extension file name
     declare -A wanted=()
-    declare -A excluded=()
-    declare -A extensions=()
-
-    mkdir -p "$STATE_DIR"
 
     for name in "${INCLUDE_NAMES[@]}"; do
         wanted["$name"]=1
-        extensions["${name##*.}"]=1
     done
 
     for name in "${EXCLUDE_NAMES[@]}"; do
-        excluded["$name"]=1
-        extensions["${name##*.}"]=1
         file="$destination/$name"
         if [ -f "$file" ]; then
             rm -f -- "$file"
-            status "$name" "$YELLOW" "Skip"
-        else
-            status "$name" "$YELLOW" "Skip"
         fi
     done
 
-    if [ -f "$state" ]; then
-        while IFS= read -r name || [ -n "$name" ]; do
-            [[ -n "$name" ]] || continue
-            extensions["${name##*.}"]=1
-            if [[ -z "${wanted[$name]+x}" || -n "${excluded[$name]+x}" ]]; then
-                file="$destination/$name"
-                if [ -f "$file" ]; then
-                    rm -f -- "$file"
-                    status "$name" "$YELLOW" "Skip"
-                fi
-            fi
-        done < "$state"
-    fi
-
-    for extension in "${!extensions[@]}"; do
+    for extension in "${EXTENSIONS[@]}"; do
         while IFS= read -r -d '' file; do
             name="$(basename -- "$file")"
-            if [[ -n "${wanted[$name]+x}" || -n "${excluded[$name]+x}" ]]; then
-                continue
+            if [[ -z "${wanted[$name]+x}" ]]; then
+                rm -f -- "$file"
             fi
-            continue
         done < <(find "$destination" -maxdepth 1 -type f -name "*.$extension" -print0)
     done
-}
-
-save_state() {
-    local state="$1"
-    local name
-    local temp="${state}.part"
-
-    : > "$temp"
-    for name in "${INCLUDE_NAMES[@]}"; do
-        printf '%s\n' "$name" >> "$temp"
-    done
-    for name in "${EXCLUDE_NAMES[@]}"; do
-        printf '%s\n' "$name" >> "$temp"
-    done
-    mv -f -- "$temp" "$state"
 }
 
 download_file() {
     local name="$1"
     local url="$2"
     local destination="$ROOT/$LIST_DESTINATION"
+    local target="$destination/$name"
     local temp="$destination/.${name}.part"
 
-    if [ -f "$destination/$name" ]; then
-        status "$name" "$GREEN" "Done"
-        return 0
-    fi
-
-    printf '    %-36s [%b%*s%b]' "$name" "$CYAN" 4 '' "$RESET"
     rm -f -- "$temp"
+
+    if [ -f "$target" ]; then
+        if curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 1 --retry-all-errors \
+            --connect-timeout 15 --max-time 300 \
+            --user-agent "$USER_AGENT" \
+            --time-cond "$target" \
+            --output "$temp" -- "$url"; then
+            if [[ ! -s "$temp" ]]; then
+                rm -f -- "$temp"
+                status "$name" "$GREEN" "Done"
+                return 0
+            fi
+            mv -f -- "$temp" "$target"
+            status "$name" "$GREEN" "Done"
+            return 0
+        fi
+
+        rm -f -- "$temp"
+        status "$name" "$RED" "Fail"
+        return 1
+    fi
 
     if curl --fail --silent --show-error --location \
         --retry 5 --retry-delay 1 --retry-all-errors \
@@ -198,18 +184,15 @@ download_file() {
         --output "$temp" -- "$url"; then
         if [[ ! -s "$temp" ]]; then
             rm -f -- "$temp"
-            printf '\r'
             status "$name" "$RED" "Fail"
             return 1
         fi
-        mv -f -- "$temp" "$destination/$name"
-        printf '\r'
+        mv -f -- "$temp" "$target"
         status "$name" "$GREEN" "Done"
         return 0
     fi
 
     rm -f -- "$temp"
-    printf '\r'
     status "$name" "$RED" "Fail"
     return 1
 }
@@ -315,16 +298,14 @@ EOF
 
 process_list() {
     local list="$1"
-    local state
-    local failed=0
     local index
+    local failed=0
 
     parse_list "$list"
-    state="$(state_file "$list")"
-
-    clean_list "$list" "$state"
 
     printf '\n%b[%s]%b\n' "$BOLD" "$(basename "$list")" "$RESET"
+
+    clean_list
 
     for index in "${!INCLUDE_NAMES[@]}"; do
         if ! download_file "${INCLUDE_NAMES[$index]}" "${INCLUDE_URLS[$index]}"; then
@@ -332,9 +313,11 @@ process_list() {
         fi
     done
 
-    save_state "$state"
-    generate_forcepack_config
+    for index in "${!EXCLUDE_NAMES[@]}"; do
+        status "${EXCLUDE_NAMES[$index]}" "$YELLOW" "Skip"
+    done
 
+    generate_forcepack_config
     return "$failed"
 }
 
