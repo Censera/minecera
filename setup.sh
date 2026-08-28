@@ -4,6 +4,7 @@ shopt -s extglob
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_AGENT="Minecera/1.0 (https://github.com/Censera/minecera)"
+STATE_DIR="$ROOT/run/setup"
 
 LIST_DESTINATION=""
 INCLUDE_NAMES=()
@@ -90,11 +91,21 @@ parse_list() {
     mkdir -p "$ROOT/$LIST_DESTINATION"
 }
 
+state_file() {
+    local list="$1"
+    printf '%s/%s.managed\n' "$STATE_DIR" "$(basename "$list" .list)"
+}
+
 clean_list() {
+    local list="$1"
     local destination="$ROOT/$LIST_DESTINATION"
-    local index name file
+    local state="$2"
+    local name file
     declare -A wanted=()
     declare -A excluded=()
+    declare -A previous=()
+
+    mkdir -p "$STATE_DIR"
 
     for name in "${INCLUDE_NAMES[@]}"; do
         wanted["$name"]=1
@@ -102,10 +113,6 @@ clean_list() {
 
     for name in "${EXCLUDE_NAMES[@]}"; do
         excluded["$name"]=1
-    done
-
-    for index in "${!EXCLUDE_NAMES[@]}"; do
-        name="${EXCLUDE_NAMES[$index]}"
         file="$destination/$name"
         if [ -f "$file" ]; then
             rm -f -- "$file"
@@ -113,13 +120,34 @@ clean_list() {
         fi
     done
 
-    while IFS= read -r -d '' file; do
-        name="$(basename -- "$file")"
-        if [[ -z "${wanted[$name]+x}" && -z "${excluded[$name]+x}" ]]; then
-            rm -f -- "$file"
-            report "removed stale $LIST_DESTINATION/$name"
-        fi
-    done < <(find "$destination" -maxdepth 1 -type f -print0)
+    if [ -f "$state" ]; then
+        while IFS= read -r name || [ -n "$name" ]; do
+            [[ -n "$name" ]] || continue
+            previous["$name"]=1
+            if [[ -z "${wanted[$name]+x}" || -n "${excluded[$name]+x}" ]]; then
+                file="$destination/$name"
+                if [ -f "$file" ]; then
+                    rm -f -- "$file"
+                    report "removed stale $LIST_DESTINATION/$name"
+                fi
+            fi
+        done < "$state"
+    fi
+}
+
+save_state() {
+    local state="$1"
+    local name
+    local temp="${state}.part"
+
+    : > "$temp"
+    for name in "${INCLUDE_NAMES[@]}"; do
+        printf '%s\n' "$name" >> "$temp"
+    done
+    for name in "${EXCLUDE_NAMES[@]}"; do
+        printf '%s\n' "$name" >> "$temp"
+    done
+    mv -f -- "$temp" "$state"
 }
 
 download_list() {
@@ -256,10 +284,14 @@ EOF
 
 process_list() {
     local list="$1"
+    local state
+
     report "processing $(basename "$list")"
     parse_list "$list"
-    clean_list
+    state="$(state_file "$list")"
+    clean_list "$list" "$state"
     download_list
+    save_state "$state"
     generate_forcepack_config
     echo
 }
