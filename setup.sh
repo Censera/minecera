@@ -146,6 +146,16 @@ clean_list() {
     done
 }
 
+remote_download() {
+    local url="$1"
+    local output="$2"
+    curl --fail --silent --show-error --location \
+        --retry 5 --retry-delay 1 --retry-all-errors \
+        --connect-timeout 15 --max-time 300 \
+        --user-agent "$USER_AGENT" \
+        --output "$output" -- "$url"
+}
+
 download_file() {
     local name="$1"
     local url="$2"
@@ -155,23 +165,12 @@ download_file() {
 
     rm -f -- "$temp"
 
-    if [ -f "$target" ]; then
-        if curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 1 --retry-all-errors \
-            --connect-timeout 15 --max-time 300 \
-            --user-agent "$USER_AGENT" \
-            --time-cond "$target" \
-            --output "$temp" -- "$url"; then
-            if [[ ! -s "$temp" ]]; then
-                rm -f -- "$temp"
-                status "$name" "$GREEN" "Done"
-                return 0
-            fi
+    if [ ! -f "$target" ]; then
+        if remote_download "$url" "$temp" && [ -s "$temp" ]; then
             mv -f -- "$temp" "$target"
             status "$name" "$GREEN" "Done"
             return 0
         fi
-
         rm -f -- "$temp"
         status "$name" "$RED" "Fail"
         return 1
@@ -179,16 +178,21 @@ download_file() {
 
     if curl --fail --silent --show-error --location \
         --retry 5 --retry-delay 1 --retry-all-errors \
-        --connect-timeout 15 --max-time 300 \
+        --connect-timeout 15 --max-time 30 \
         --user-agent "$USER_AGENT" \
-        --output "$temp" -- "$url"; then
-        if [[ ! -s "$temp" ]]; then
-            rm -f -- "$temp"
-            status "$name" "$RED" "Fail"
-            return 1
-        fi
-        mv -f -- "$temp" "$target"
+        --head --time-cond "$target" -- "$url"; then
         status "$name" "$GREEN" "Done"
+        return 0
+    fi
+
+    if remote_download "$url" "$temp" && [ -s "$temp" ]; then
+        if cmp -s "$temp" "$target"; then
+            rm -f -- "$temp"
+            status "$name" "$GREEN" "Done"
+        else
+            mv -f -- "$temp" "$target"
+            status "$name" "$GREEN" "Done"
+        fi
         return 0
     fi
 
