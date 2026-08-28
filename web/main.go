@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	_ "embed"
 	"crypto/rand"
 	"encoding/hex"
@@ -28,7 +29,7 @@ var optimizationJS []byte
 const (
 	defaultRoot = "/home/censera/minecraft"
 	listenAddr  = "127.0.0.1:8080"
-	statusEvery = 5
+	statusEvery = 5 * time.Second
 	logLines    = 500
 	webUser     = "censera"
 )
@@ -55,8 +56,7 @@ type Status struct {
 }
 
 type Snapshot struct {
-	Status Status   `json:"status"`
-	Logs   []string `json:"logs,omitempty"`
+	Status Status `json:"status"`
 }
 
 func main() {
@@ -159,17 +159,17 @@ func (a *App) handleOptimizationJS(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) handleStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, a.snapshot(false))
+	writeJSON(w, a.status())
 }
 
 func (a *App) handleLogs(w http.ResponseWriter, r *http.Request) {
-	lines := 200
+	lines := logLines
 	if raw := r.URL.Query().Get("lines"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n >= 1 && n <= logLines {
 			lines = n
 		}
 	}
-	writeJSON(w, a.logs(lines))
+	writeJSON(w, map[string]any{"logs": a.logs(lines)})
 }
 
 func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
@@ -184,31 +184,96 @@ func (a *App) handleEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	status := a.status()
-	if err := writeEvent(w, Snapshot{Status: status}); err != nil {
+	if err := writeEvent(w, Snapshot{Status: a.status()}); err != nil {
 		return
 	}
 	flusher.Flush()
 
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	counter := 0
+	logPath := a.currentLogPath()
+	file, reader := openLogTail(logPath)
+	if file != nil {
+		defer file.Close()
+	}
+
+	statusTicker := time.NewTicker(statusEvery)
+	pollTicker := time.NewTicker(250 * time.Millisecond)
+	keepaliveTicker := time.NewTicker(20 * time.Second)
+	defer statusTicker.Stop()
+	defer pollTicker.Stop()
+	defer keepaliveTicker.Stop()
+
 	for {
 		select {
-		case <-ticker.C:
-			counter++
-			if counter >= statusEvery {
-				status = a.status()
-				counter = 0
-			}
-			if err := writeEvent(w, Snapshot{Status: status}); err != nil {
+		case <-statusTicker.C:
+			if err := writeEvent(w, Snapshot{Status: a.status()}); err != nil {
 				return
 			}
 			flusher.Flush()
+
+		case <-pollTicker.C:
+			newPath := a.currentLogPath()
+			if newPath != logPath {
+				if file != nil {
+					_ = file.Close()
+				}
+				logPath = newPath
+				file, reader = openLogTail(logPath)
+			}
+
+			if reader == nil {
+				continue
+			}
+
+			for {
+				line, err := reader.ReadString('\n')
+				if len(line) > 0 {
+					line = strings.TrimRight(line, "\r\n")
+					if err == nil || errors.Is(err, bufio.ErrBufferFull) || errors.Is(err, os.ErrInvalid) {
+						if err := writeLogEvent(w, line); err != nil {
+							return
+						}
+						flusher.Flush()
+					}
+				}
+				if err != nil {
+					break
+				}
+			}
+
+		case <-keepaliveTicker.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+func openLogTail(path string) (*os.File, *bufio.Reader) {
+	if path == "" {
+		return nil, nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, nil
+	}
+	if _, err := file.Seek(0, 2); err != nil {
+		_ = file.Close()
+		return nil, nil
+	}
+	return file, bufio.NewReaderSize(file, 64*1024)
+}
+
+func writeLogEvent(w http.ResponseWriter, line string) error {
+	data, err := json.Marshal(line)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(w, "event: log\ndata: %s\n\n", data)
+	return err
 }
 
 func (a *App) handleControl(w http.ResponseWriter, r *http.Request) {
@@ -217,7 +282,7 @@ func (a *App) handleControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body struct { Action string `json:"action"` }
+	var body struct{ Action string `json:"action"` }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
@@ -240,7 +305,7 @@ func (a *App) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var request struct { Command string `json:"command"` }
+	var request struct{ Command string `json:"command"` }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&request); err != nil {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
@@ -284,15 +349,6 @@ func writeFIFO(path, value string) error {
 		return fmt.Errorf("write control channel: %w", err)
 	}
 	return nil
-}
-
-func (a *App) snapshot(includeLogs bool) Snapshot {
-	status := a.status()
-	var logs []string
-	if includeLogs {
-		logs = a.logs(logLines)
-	}
-	return Snapshot{Status: status, Logs: logs}
 }
 
 func (a *App) status() Status {
@@ -367,21 +423,25 @@ func latestJournalEvent() string {
 	return strings.TrimSpace(string(out))
 }
 
-func (a *App) logs(lines int) []string {
+func (a *App) currentLogPath() string {
 	files, _ := filepath.Glob(filepath.Join(a.root, "logs", "server-*.log"))
-	if len(files) == 0 { return []string{"no Minecraft server log exists"} }
-
-	type logFile struct { path string; mod time.Time }
-	logs := make([]logFile, 0, len(files))
+	var newest string
+	var newestMod time.Time
 	for _, path := range files {
 		info, err := os.Stat(path)
 		if err != nil { continue }
-		logs = append(logs, logFile{path: path, mod: info.ModTime()})
+		if newest == "" || info.ModTime().After(newestMod) {
+			newest = path
+			newestMod = info.ModTime()
+		}
 	}
-	if len(logs) == 0 { return []string{"no readable Minecraft server log exists"} }
-	sort.Slice(logs, func(i, j int) bool { return logs[i].mod.After(logs[j].mod) })
+	return newest
+}
 
-	data, err := os.ReadFile(logs[0].path)
+func (a *App) logs(lines int) []string {
+	path := a.currentLogPath()
+	if path == "" { return []string{"no Minecraft server log exists"} }
+	data, err := os.ReadFile(path)
 	if err != nil { return []string{"cannot read Minecraft log: " + err.Error()} }
 	all := splitLines(string(data))
 	if len(all) > lines { all = all[len(all)-lines:] }
