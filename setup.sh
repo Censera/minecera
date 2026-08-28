@@ -6,13 +6,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 USER_AGENT="Minecera/1.0 (https://github.com/Censera/minecera)"
 STATE_DIR="$ROOT/run/setup"
 
+RESET='\033[0m'
+BOLD='\033[1m'
+GREEN='\033[32m'
+RED='\033[31m'
+YELLOW='\033[33m'
+CYAN='\033[36m'
+DIM='\033[2m'
+
 LIST_DESTINATION=""
 INCLUDE_NAMES=()
 INCLUDE_URLS=()
 EXCLUDE_NAMES=()
 
 report() {
-    printf '[%s] %s\n' "$(date '+%F %T')" "$*"
+    printf '%b\n' "$*"
+}
+
+status() {
+    local label="$1"
+    local color="$2"
+    printf '    %-36s [%b%s%b]\n' "$label" "$color" "${3:-}" "$RESET"
 }
 
 discover_lists() {
@@ -97,42 +111,55 @@ state_file() {
 }
 
 clean_list() {
-    local list="$1"
     local destination="$ROOT/$LIST_DESTINATION"
     local state="$2"
-    local name file
+    local name file extension
     declare -A wanted=()
     declare -A excluded=()
-    declare -A previous=()
+    declare -A extensions=()
 
     mkdir -p "$STATE_DIR"
 
     for name in "${INCLUDE_NAMES[@]}"; do
         wanted["$name"]=1
+        extensions["${name##*.}"]=1
     done
 
     for name in "${EXCLUDE_NAMES[@]}"; do
         excluded["$name"]=1
+        extensions["${name##*.}"]=1
         file="$destination/$name"
         if [ -f "$file" ]; then
             rm -f -- "$file"
-            report "excluded $LIST_DESTINATION/$name"
+            status "$name" "$YELLOW" "Skip"
+        else
+            status "$name" "$YELLOW" "Skip"
         fi
     done
 
     if [ -f "$state" ]; then
         while IFS= read -r name || [ -n "$name" ]; do
             [[ -n "$name" ]] || continue
-            previous["$name"]=1
+            extensions["${name##*.}"]=1
             if [[ -z "${wanted[$name]+x}" || -n "${excluded[$name]+x}" ]]; then
                 file="$destination/$name"
                 if [ -f "$file" ]; then
                     rm -f -- "$file"
-                    report "removed stale $LIST_DESTINATION/$name"
+                    status "$name" "$YELLOW" "Skip"
                 fi
             fi
         done < "$state"
     fi
+
+    for extension in "${!extensions[@]}"; do
+        while IFS= read -r -d '' file; do
+            name="$(basename -- "$file")"
+            if [[ -n "${wanted[$name]+x}" || -n "${excluded[$name]+x}" ]]; then
+                continue
+            fi
+            continue
+        done < <(find "$destination" -maxdepth 1 -type f -name "*.$extension" -print0)
+    done
 }
 
 save_state() {
@@ -150,37 +177,41 @@ save_state() {
     mv -f -- "$temp" "$state"
 }
 
-download_list() {
+download_file() {
+    local name="$1"
+    local url="$2"
     local destination="$ROOT/$LIST_DESTINATION"
-    local index name url temp
+    local temp="$destination/.${name}.part"
 
-    for index in "${!INCLUDE_NAMES[@]}"; do
-        name="${INCLUDE_NAMES[$index]}"
-        url="${INCLUDE_URLS[$index]}"
-        temp="$destination/.${name}.part"
+    if [ -f "$destination/$name" ]; then
+        status "$name" "$GREEN" "Done"
+        return 0
+    fi
 
-        printf '  %-40s' "$name"
-        rm -f -- "$temp"
+    printf '    %-36s [%b%*s%b]' "$name" "$CYAN" 4 '' "$RESET"
+    rm -f -- "$temp"
 
-        if curl --fail --silent --show-error --location \
-            --retry 5 --retry-delay 1 --retry-all-errors \
-            --connect-timeout 15 --max-time 300 \
-            --user-agent "$USER_AGENT" \
-            --output "$temp" -- "$url"; then
-            if [[ ! -s "$temp" ]]; then
-                rm -f -- "$temp"
-                echo "FAILED (empty response)" >&2
-                return 1
-            fi
-            mv -f -- "$temp" "$destination/$name"
-            echo "ok"
-        else
+    if curl --fail --silent --show-error --location \
+        --retry 5 --retry-delay 1 --retry-all-errors \
+        --connect-timeout 15 --max-time 300 \
+        --user-agent "$USER_AGENT" \
+        --output "$temp" -- "$url"; then
+        if [[ ! -s "$temp" ]]; then
             rm -f -- "$temp"
-            echo "FAILED" >&2
-            echo "    $url" >&2
+            printf '\r'
+            status "$name" "$RED" "Fail"
             return 1
         fi
-    done
+        mv -f -- "$temp" "$destination/$name"
+        printf '\r'
+        status "$name" "$GREEN" "Done"
+        return 0
+    fi
+
+    rm -f -- "$temp"
+    printf '\r'
+    status "$name" "$RED" "Fail"
+    return 1
 }
 
 generate_forcepack_config() {
@@ -279,27 +310,52 @@ EOF
     } > "$temp"
 
     mv -f -- "$temp" "$config"
-    report "ForcePack config generated"
+    report "${BOLD}${CYAN}[ForcePack]${RESET} Config generated"
 }
 
 process_list() {
     local list="$1"
     local state
+    local failed=0
+    local index
 
-    report "processing $(basename "$list")"
     parse_list "$list"
     state="$(state_file "$list")"
+
     clean_list "$list" "$state"
-    download_list
+
+    printf '\n%b[%s]%b\n' "$BOLD" "$(basename "$list")" "$RESET"
+
+    for index in "${!INCLUDE_NAMES[@]}"; do
+        if ! download_file "${INCLUDE_NAMES[$index]}" "${INCLUDE_URLS[$index]}"; then
+            failed=1
+        fi
+    done
+
     save_state "$state"
     generate_forcepack_config
-    echo
+
+    return "$failed"
 }
 
 discover_lists
 
+names=()
 for list in "${LISTS[@]}"; do
-    process_list "$list"
+    names+=("$(basename "$list")")
+done
+printf '%bInstalling:%b %s\n' "$BOLD$CYAN" "$RESET" "$(IFS=', '; echo "${names[*]}")"
+
+failed=0
+for list in "${LISTS[@]}"; do
+    if ! process_list "$list"; then
+        failed=1
+    fi
 done
 
-report "Setup complete."
+if [ "$failed" -eq 0 ]; then
+    printf '\n%bSetup Complete%b\n' "$BOLD$GREEN" "$RESET"
+else
+    printf '\n%bSetup Complete with errors%b\n' "$BOLD$RED" "$RESET"
+    exit 1
+fi
