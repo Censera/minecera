@@ -33,9 +33,7 @@
   const loadCache = () => {
     try {
       const value = JSON.parse(localStorage.getItem(LOG_CACHE_KEY) || '{}');
-      if (Array.isArray(value.lines)) {
-        localLogs = value.lines.filter(line => typeof line === 'string').slice(-LOG_CACHE_LIMIT);
-      }
+      if (Array.isArray(value.lines)) localLogs = value.lines.filter(line => typeof line === 'string').slice(-LOG_CACHE_LIMIT);
       if (Number.isInteger(value.pid)) cachedPID = value.pid;
     } catch (_) {}
   };
@@ -52,10 +50,7 @@
     if (!valid.length) return;
 
     localLogs.push(...valid);
-    if (localLogs.length > LOG_CACHE_LIMIT) {
-      localLogs.splice(0, localLogs.length - LOG_CACHE_LIMIT);
-    }
-
+    if (localLogs.length > LOG_CACHE_LIMIT) localLogs.splice(0, localLogs.length - LOG_CACHE_LIMIT);
     if (typeof renderLogs === 'function') renderLogs(localLogs);
     saveCache();
   };
@@ -64,30 +59,25 @@
     if (!Array.isArray(lines) || !lines.length) return;
     if (!localLogs.length) {
       localLogs = lines.slice(-LOG_CACHE_LIMIT);
-      if (typeof renderLogs === 'function') renderLogs(localLogs);
-      saveCache();
-      return;
-    }
-
-    const overlap = Math.min(100, localLogs.length, lines.length);
-    let matched = false;
-    for (let i = 0; i <= lines.length - overlap && overlap > 0; i++) {
-      let same = true;
-      for (let j = 0; j < overlap; j++) {
-        if (lines[i + j] !== localLogs[localLogs.length - overlap + j]) {
-          same = false;
-          break;
+    } else {
+      const overlap = Math.min(100, localLogs.length, lines.length);
+      let matched = false;
+      if (overlap > 0) {
+        for (let i = 0; i <= lines.length - overlap; i++) {
+          let same = true;
+          for (let j = 0; j < overlap; j++) {
+            if (lines[i + j] !== localLogs[localLogs.length - overlap + j]) { same = false; break; }
+          }
+          if (same) {
+            localLogs.push(...lines.slice(i + overlap));
+            matched = true;
+            break;
+          }
         }
       }
-      if (same) {
-        localLogs.push(...lines.slice(i + overlap));
-        matched = true;
-        break;
-      }
+      if (!matched) localLogs = lines.slice(-LOG_CACHE_LIMIT);
+      localLogs = localLogs.slice(-LOG_CACHE_LIMIT);
     }
-
-    if (!matched) localLogs = lines.slice(-LOG_CACHE_LIMIT);
-    localLogs = localLogs.slice(-LOG_CACHE_LIMIT);
     if (typeof renderLogs === 'function') renderLogs(localLogs);
     saveCache();
   };
@@ -102,58 +92,42 @@
     } catch (_) {}
   };
 
-  const handleSnapshot = data => {
-    const status = data?.status;
-    if (status) {
+  const originalApply = window.apply;
+  window.apply = data => {
+    if (data?.status?.status) {
+      const status = data.status.status;
       const pid = Number(status.pid) || null;
+      if (pid !== null && cachedPID !== null && cachedPID !== pid) resetCache();
+      if (pid !== null) cachedPID = pid;
+    } else if (data?.status) {
+      const pid = Number(data.status.pid) || null;
       if (pid !== null && cachedPID !== null && cachedPID !== pid) resetCache();
       if (pid !== null) cachedPID = pid;
     }
 
     if (Array.isArray(data?.logs)) appendLogs(data.logs);
-  };
 
-  const NativeEventSource = window.EventSource;
-  window.EventSource = function MineceraEventSource(url, options) {
-    const source = new NativeEventSource(url, options);
-    if (String(url).startsWith('/api/events')) {
-      source.addEventListener('snapshot', event => {
-        try { handleSnapshot(JSON.parse(event.data)); } catch (_) {}
-      });
+    if (data?.status && typeof data.status === 'object') {
+      const status = data.status.status || data.status;
+      if (typeof renderStatus === 'function') renderStatus(status);
     }
-    return source;
   };
-  window.EventSource.prototype = NativeEventSource.prototype;
 
   const addRefreshControl = () => {
     const footer = document.querySelector('.actions');
     if (!footer || document.getElementById('refresh-control')) return;
-
     const wrap = document.createElement('label');
     wrap.id = 'refresh-control';
     wrap.title = 'How often player telemetry refreshes';
     wrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:10px;color:var(--dim);font-size:10px;white-space:nowrap';
-
     const text = document.createElement('span');
     const slider = document.createElement('input');
     const value = document.createElement('span');
-    slider.type = 'range';
-    slider.min = String(MIN);
-    slider.max = String(MAX);
-    slider.step = '1';
-    slider.value = String(readRefresh());
+    slider.type = 'range'; slider.min = String(MIN); slider.max = String(MAX); slider.step = '1'; slider.value = String(readRefresh());
     slider.style.cssText = 'width:90px;accent-color:var(--blue)';
-
     const update = () => { value.textContent = `${slider.value}s`; };
-    slider.addEventListener('input', () => {
-      localStorage.setItem(REFRESH_KEY, slider.value);
-      update();
-      schedulePlayers();
-    });
-
-    text.textContent = 'refresh';
-    update();
-    wrap.append(text, slider, value);
+    slider.addEventListener('input', () => { localStorage.setItem(REFRESH_KEY, slider.value); update(); schedulePlayers(); });
+    text.textContent = 'refresh'; update(); wrap.append(text, slider, value);
     footer.insertBefore(wrap, document.getElementById('updated'));
   };
 
