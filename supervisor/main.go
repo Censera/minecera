@@ -70,7 +70,6 @@ func main() {
 	}
 	if err := acquireLock(); err != nil { panic(err) }
 	defer releaseLock()
-
 	if err := ensureFIFO(controlFIFO); err != nil { panic(err) }
 	if err := ensureFIFO(serverFIFO); err != nil { panic(err) }
 
@@ -102,16 +101,13 @@ func main() {
 		err := s.runCurrent()
 		if !s.desired { break }
 		if err == nil { continue }
-
 		if s.noRecoveryOnce {
 			s.noRecoveryOnce = false
 			continue
 		}
-
 		if s.retryCurrent() { continue }
 		if s.recoverFromBackups() { continue }
-
-		logf("automatic recovery exhausted; current world remains preserved")
+		logf("automatic recovery exhausted; current world preserved")
 		time.Sleep(10 * time.Second)
 	}
 }
@@ -152,8 +148,7 @@ func fifoReader(file *os.File, dst chan<- string) {
 		if line == "" { continue }
 		select {
 		case dst <- line:
-		default:
-			logf("command queue full; dropped command: %s", line)
+		default: logf("command queue full; dropped command: %s", line)
 		}
 	}
 }
@@ -162,36 +157,9 @@ func (s *Supervisor) runCurrent() error {
 	p, err := s.startChecked(root, true)
 	if err != nil { return err }
 	s.process = p
-	defer func() {
-		if s.process == p { s.process = nil }
-	}()
-
+	defer func() { if s.process == p { s.process = nil } }()
 	logf("Minecraft healthy")
-	for {
-		select {
-		case command := <-s.controlCh:
-			if err := s.handleControl(command); err != nil { logf("command failed: %v", err) }
-			if !s.desired { return nil }
-			if s.process == nil { return nil }
-
-		case command := <-s.serverInputCh:
-			if err := writeCommand(p, command); err != nil { logf("console command failed: %v", err) }
-
-		case <-time.After(time.Minute):
-			if backupDue() {
-				if err := s.createBackup(p); err != nil {
-					logf("daily backup failed: %v", err)
-					if s.process == nil { return err }
-				}
-			}
-
-		case <-p.done:
-			err := p.exitError()
-			if err != nil { logf("Minecraft exited: %v", err) }
-			else { logf("Minecraft stopped") }
-			return err
-		}
-	}
+	return s.monitor(p)
 }
 
 func (s *Supervisor) startChecked(dir string, live bool) (*Process, error) {
@@ -200,7 +168,7 @@ func (s *Supervisor) startChecked(dir string, live bool) (*Process, error) {
 		if err := os.WriteFile(filepath.Join(dir, "eula.txt"), []byte("eula=true\n"), 0644); err != nil { return nil, err }
 	}
 
-	stamp := time.Now().Format("20060102-150405")
+	stamp := time.Now().Format("20060102-150405.000000000")
 	name := "server-" + stamp + ".log"
 	if !live { name = "backup-test-" + stamp + ".log" }
 	logFile, err := os.OpenFile(filepath.Join(logsDir, name), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -217,7 +185,6 @@ func (s *Supervisor) startChecked(dir string, live bool) (*Process, error) {
 			"MINECERA_XMX=1G",
 		)
 	}
-
 	stdin, err := cmd.StdinPipe()
 	if err != nil { _ = logFile.Close(); return nil, err }
 	stdout, err := cmd.StdoutPipe()
@@ -226,7 +193,7 @@ func (s *Supervisor) startChecked(dir string, live bool) (*Process, error) {
 	if err != nil { _ = stdin.Close(); _ = stdout.Close(); _ = logFile.Close(); return nil, err }
 	if err := cmd.Start(); err != nil { _ = stdin.Close(); _ = stdout.Close(); _ = stderr.Close(); _ = logFile.Close(); return nil, err }
 
-	p := &Process{cmd: cmd, stdin: stdin, lines: make(chan string, 2048), done: make(chan struct{}), log: logFile}
+	p := &Process{cmd: cmd, stdin: stdin, lines: make(chan string, 8192), done: make(chan struct{}), log: logFile}
 	var wg sync.WaitGroup
 	copyOutput := func(r io.Reader) {
 		defer wg.Done()
@@ -244,12 +211,12 @@ func (s *Supervisor) startChecked(dir string, live bool) (*Process, error) {
 	go copyOutput(stdout)
 	go copyOutput(stderr)
 	go func() {
-		exitErr := cmd.Wait()
+		err := cmd.Wait()
 		wg.Wait()
 		_ = logFile.Close()
 		_ = stdin.Close()
 		p.mu.Lock()
-		p.err = exitErr
+		p.err = err
 		p.mu.Unlock()
 		close(p.done)
 	}()
@@ -318,18 +285,17 @@ func (s *Supervisor) handleStartupCommand(p *Process, command string) {
 func writeCommand(p *Process, command string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.stdin == nil || p.exitedLocked() { return fmt.Errorf("server is not running") }
+	select {
+	case <-p.done:
+		return fmt.Errorf("server is not running")
+	default:
+	}
+	if p.stdin == nil { return fmt.Errorf("server is not running") }
 	_, err := fmt.Fprintln(p.stdin, command)
 	return err
 }
 
 func (p *Process) exited() bool {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.exitedLocked()
-}
-
-func (p *Process) exitedLocked() bool {
 	select { case <-p.done: return true; default: return false }
 }
 
@@ -340,8 +306,7 @@ func (p *Process) exitError() error {
 }
 
 func (p *Process) kill() error {
-	if p == nil || p.cmd == nil || p.cmd.Process == nil { return nil }
-	if p.exited() { return nil }
+	if p == nil || p.cmd == nil || p.cmd.Process == nil || p.exited() { return nil }
 	if err := p.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) { return err }
 	<-p.done
 	return p.exitError()
@@ -355,6 +320,7 @@ func (s *Supervisor) stopProcess() error {
 	select {
 	case <-p.done:
 		s.process = nil
+		logf("Minecraft stopped")
 		return p.exitError()
 	case <-time.After(stopTimeout):
 		_ = p.kill()
@@ -419,10 +385,7 @@ func (s *Supervisor) monitor(p *Process) error {
 		case command := <-s.serverInputCh:
 			if err := writeCommand(p, command); err != nil { logf("console command failed: %v", err) }
 		case <-backupTicker.C:
-			if backupDue() {
-				if err := s.createBackup(p); err != nil { return err }
-				return nil
-			}
+			if backupDue() { return s.createBackup(p) }
 		case <-p.done:
 			return p.exitError()
 		}
@@ -455,15 +418,6 @@ func backupDue() bool {
 	return time.Now().Hour() >= 4 && (err != nil || strings.TrimSpace(string(last)) != time.Now().Format("2006-01-02"))
 }
 
-func pruneBackups() {
-	list := healthyBackups()
-	if len(list) <= maxBackups { return }
-	for _, dir := range list[maxBackups:] {
-		logf("removing old backup: %s", filepath.Base(dir))
-		_ = os.RemoveAll(dir)
-	}
-}
-
 func healthyBackups() []string {
 	entries, _ := os.ReadDir(backupsDir)
 	list := make([]string, 0, len(entries))
@@ -473,6 +427,15 @@ func healthyBackups() []string {
 	}
 	sort.Sort(sort.Reverse(sort.StringSlice(list)))
 	return list
+}
+
+func pruneBackups() {
+	list := healthyBackups()
+	if len(list) <= maxBackups { return }
+	for _, dir := range list[maxBackups:] {
+		logf("removing old backup: %s", filepath.Base(dir))
+		_ = os.RemoveAll(dir)
+	}
 }
 
 func (s *Supervisor) validateBackup(backup string) error {
@@ -495,7 +458,7 @@ func (s *Supervisor) validateBackup(backup string) error {
 
 	p, err := s.startChecked(probe, false)
 	if err != nil { return err }
-	_ = writeCommand(p, "stop")
+	if err := writeCommand(p, "stop"); err != nil { _ = p.kill(); return err }
 	select {
 	case <-p.done:
 		if err := p.exitError(); err != nil { return fmt.Errorf("probe stop failed: %v", err) }
@@ -519,7 +482,6 @@ func (s *Supervisor) recoverFromBackups() bool {
 			logf("FATAL: cannot preserve current world: %v", err)
 			return false
 		}
-
 		if err := copyTree(filepath.Join(backup, "world"), worldDir); err != nil {
 			_ = os.RemoveAll(worldDir)
 			_ = os.Rename(preserved, worldDir)
@@ -531,8 +493,12 @@ func (s *Supervisor) recoverFromBackups() bool {
 		p, err := s.startChecked(root, true)
 		if err == nil {
 			s.process = p
-			logf("automatic recovery successful: %s; preserved current world at %s", filepath.Base(backup), filepath.Base(preserved))
-			return true
+			logf("automatic recovery successful: %s; preserved world: %s", filepath.Base(backup), filepath.Base(preserved))
+			err = s.monitor(p)
+			s.process = nil
+			if !s.desired { return true }
+			if err == nil { return true }
+			return false
 		}
 
 		logf("restored world failed health verification; reverting")
@@ -548,16 +514,16 @@ func (s *Supervisor) recoverFromBackups() bool {
 func copyTree(src, dst string) error {
 	info, err := os.Lstat(src)
 	if err != nil { return err }
-	if info.Mode()&os.ModeSymlink != 0 { return fmt.Errorf("symlink not allowed in backup path: %s", src) }
+	if info.Mode()&os.ModeSymlink != 0 { return fmt.Errorf("symlink not allowed: %s", src) }
 	if !info.IsDir() { return copyFile(src, dst, info.Mode().Perm()) }
 	if err := os.MkdirAll(dst, info.Mode().Perm()); err != nil { return err }
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil { return err }
+		if path == src { return nil }
 		rel, err := filepath.Rel(src, path)
 		if err != nil { return err }
 		target := filepath.Join(dst, rel)
-		if path == src { return nil }
-		if info.Mode()&os.ModeSymlink != 0 { return fmt.Errorf("symlink not allowed in backup path: %s", path) }
+		if info.Mode()&os.ModeSymlink != 0 { return fmt.Errorf("symlink not allowed: %s", path) }
 		if info.IsDir() { return os.MkdirAll(target, info.Mode().Perm()) }
 		if !info.Mode().IsRegular() { return fmt.Errorf("unsupported file type: %s", path) }
 		return copyFile(path, target, info.Mode().Perm())
