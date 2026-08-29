@@ -1,42 +1,35 @@
-# Paper
+# Downloaded artifacts
 paper-*.jar
 versions/
 cache/
 libraries/
 .paper/
-
-# Managed downloads
 plugins/*.jar
 resourcepacks/*.zip
-mcpacks/*
+mcpacks/
 minecera-web
 
 # Runtime
 logs/
 debug/
 crash-reports/
-
-# Regurally modified files
-server-icon.png
-server.properties
-
-# Supervisor runtime state
 backups/
 run/
 
-# Player and server state
+# Mutable server state
+server.properties
+eula.txt
 banned-ips.json
 banned-players.json
 ops.json
 usercache.json
 whitelist.json
-eula.txt
 
-# World runtime data
+# World data
 world/*
 !world/
 
-# Temporary world data
+# Temporary data
 datapacks_temp/
 
 # Plugin runtime data
@@ -52,12 +45,10 @@ plugins/GuestMode/accounts.yml
 plugins/PlayerViewDistance/*.json
 plugins/SkinsRestorer/players/
 plugins/SkinsRestorer/skins/
-
-# Named-Villagers local configuration and API key
 plugins/Named-Villagers/config.yml
 
-# Minecera web credentials
+# Local web credentials
 run/web.credentials
 
-# MOTD data
+# Local MOTD state
 motd/data.motd
