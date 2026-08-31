@@ -170,15 +170,6 @@ remote_download() {
         --output "$output" -- "$url"
 }
 
-valid_download() {
-    local file="$1"
-    [ -s "$file" ] || return 1
-    case "$(head -c 2 -- "$file")" in
-        PK) return 0 ;;
-        *)  return 1 ;;
-    esac
-}
-
 download_file() {
     local name="$1"
     local url="$2"
@@ -186,14 +177,14 @@ download_file() {
     local target="$destination/$name"
     local temp="$destination/.${name}.part"
 
-    rm -f -- "$temp"
-
-    if [ -f "$target" ] && valid_download "$target"; then
-        status "$name" "$GREEN" "Done"
+    if [ -f "$target" ]; then
+        status "$name" "$GREEN" "Skip"
         return 0
     fi
 
-    if remote_download "$url" "$temp" && valid_download "$temp"; then
+    rm -f -- "$temp"
+
+    if remote_download "$url" "$temp" && [ -s "$temp" ]; then
         mv -f -- "$temp" "$target"
         status "$name" "$GREEN" "Done"
         return 0
