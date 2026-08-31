@@ -149,11 +149,27 @@ clean_list() {
 remote_download() {
     local url="$1"
     local output="$2"
+
+    if [[ "$url" == *drive.google.com/* || "$url" == *drive.usercontent.google.com/* ]]; then
+        command -v gdown >/dev/null 2>&1 || {
+            echo "Google Drive download requires gdown: $url" >&2
+            return 1
+        }
+        gdown --fuzzy "$url" --output "$output"
+        return $?
+    fi
+
     curl --fail --silent --show-error --location \
         --retry 5 --retry-delay 1 --retry-all-errors \
         --connect-timeout 15 --max-time 300 \
         --user-agent "$USER_AGENT" \
         --output "$output" -- "$url"
+}
+
+valid_download() {
+    local file="$1"
+    [ -s "$file" ] || return 1
+    unzip -tq -- "$file" >/dev/null 2>&1
 }
 
 download_file() {
@@ -165,32 +181,13 @@ download_file() {
 
     rm -f -- "$temp"
 
-    if [ ! -f "$target" ]; then
-        if remote_download "$url" "$temp" && [ -s "$temp" ]; then
-            mv -f -- "$temp" "$target"
-            status "$name" "$GREEN" "Done"
-            return 0
-        fi
-        rm -f -- "$temp"
-        status "$name" "$RED" "Fail"
-        return 1
-    fi
-
-    if curl --fail --silent --show-error --location \
-        --retry 5 --retry-delay 1 --retry-all-errors \
-        --connect-timeout 15 --max-time 30 \
-        --user-agent "$USER_AGENT" \
-        --head --time-cond "$target" -- "$url" >/dev/null 2>&1; then
+    if [ -f "$target" ] && valid_download "$target"; then
         status "$name" "$GREEN" "Done"
         return 0
     fi
 
-    if remote_download "$url" "$temp" && [ -s "$temp" ]; then
-        if cmp -s "$temp" "$target"; then
-            rm -f -- "$temp"
-        else
-            mv -f -- "$temp" "$target"
-        fi
+    if remote_download "$url" "$temp" && valid_download "$temp"; then
+        mv -f -- "$temp" "$target"
         status "$name" "$GREEN" "Done"
         return 0
     fi
