@@ -1,49 +1,65 @@
 (() => {
 'use strict';
 
-const RANGES = { day: 86400, week: 7 * 86400, month: 30 * 86400, year: 365 * 86400, all: 0 };
+const RANGE_SECONDS = { day: 86400, week: 7 * 86400, month: 30 * 86400, year: 365 * 86400, all: 0 };
+const MAX_POINTS = 1200;
+const Y_MAX = 15;
 let range = 'week';
 let rawPoints = [];
 let visibleData = [];
 let hoveredIndex = -1;
 
 function startOfDay(timestamp) {
-  const date = new Date(timestamp * 1000);
-  date.setHours(0, 0, 0, 0);
-  return Math.floor(date.getTime() / 1000);
+  const d = new Date(timestamp * 1000);
+  d.setHours(0, 0, 0, 0);
+  return Math.floor(d.getTime() / 1000);
 }
 
-function aggregateDaily(points) {
-  const days = new Map();
+function aggregate(points, bucketSeconds) {
+  const buckets = new Map();
   for (const point of points) {
     const time = Number(point.time);
     const count = Number(point.count);
     if (!Number.isFinite(time) || !Number.isFinite(count)) continue;
-    const day = startOfDay(time);
-    const entry = days.get(day) || { time: day, sum: 0, samples: 0 };
+    const bucket = bucketSeconds > 1 ? Math.floor(time / bucketSeconds) * bucketSeconds : time;
+    const entry = buckets.get(bucket) || { time: bucket, sum: 0, samples: 0 };
     entry.sum += count;
     entry.samples++;
-    days.set(day, entry);
+    buckets.set(bucket, entry);
   }
-  return [...days.values()]
+  return [...buckets.values()]
     .sort((a, b) => a.time - b.time)
-    .map(entry => ({ time: entry.time, count: Math.round(entry.sum / entry.samples) }));
+    .map(entry => ({ time: entry.time, count: entry.sum / entry.samples }));
+}
+
+function decimate(points) {
+  if (points.length <= MAX_POINTS) return points;
+  const bucketSize = Math.ceil(points.length / MAX_POINTS);
+  const result = [];
+  for (let i = 0; i < points.length; i += bucketSize) {
+    const bucket = points.slice(i, i + bucketSize);
+    const sum = bucket.reduce((total, point) => total + point.count, 0);
+    result.push({
+      time: bucket[Math.floor(bucket.length / 2)].time,
+      count: sum / bucket.length
+    });
+  }
+  return result;
 }
 
 function dataForRange() {
-  if (!rawPoints.length) return [];
   const now = Math.floor(Date.now() / 1000);
-  const seconds = RANGES[range];
-  const filtered = seconds ? rawPoints.filter(point => Number(point.time) >= now - seconds) : rawPoints.slice();
-  if (range === 'day') return filtered;
-  const days = new Set(filtered.map(point => startOfDay(Number(point.time))));
-  return days.size >= 2 ? aggregateDaily(filtered) : filtered;
-}
+  const seconds = RANGE_SECONDS[range];
+  const filtered = seconds
+    ? rawPoints.filter(point => Number(point.time) >= now - seconds)
+    : rawPoints.slice();
 
-function formatDate(timestamp) {
-  const date = new Date(timestamp * 1000);
-  if (range === 'day') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (!filtered.length) return [];
+  if (range === 'day') return decimate(filtered);
+
+  const days = new Set(filtered.map(point => startOfDay(Number(point.time))));
+  if (days.size <= 1) return decimate(filtered);
+  return aggregate(filtered, 86400);
 }
 
 function style() {
@@ -79,7 +95,7 @@ function panelHTML() {
     </div>
     <div class="player-history-controls">
       <div class="player-history-ranges">
-        ${Object.keys(RANGES).map(name => `<button type="button" class="player-history-range${name === range ? ' active' : ''}" data-range="${name}">${name[0].toUpperCase()}${name.slice(1)}</button>`).join('')}
+        ${Object.keys(RANGE_SECONDS).map(name => `<button type="button" class="player-history-range${name === range ? ' active' : ''}" data-range="${name}">${name[0].toUpperCase()}${name.slice(1)}</button>`).join('')}
       </div>
     </div>
   </div>`;
@@ -94,88 +110,78 @@ function updateStats() {
     return;
   }
   const counts = visibleData.map(point => point.count);
-  peak.textContent = String(Math.max(...counts));
-  avg.textContent = String(Math.round(counts.reduce((sum, count) => sum + count, 0) / counts.length));
+  peak.textContent = String(Math.round(Math.max(...counts)));
+  avg.textContent = String(Math.round(counts.reduce((sum, value) => sum + value, 0) / counts.length));
+}
+
+function formatDate(timestamp) {
+  const date = new Date(timestamp * 1000);
+  if (range === 'day') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function renderChart() {
   const canvas = document.getElementById('historyChart');
   if (!canvas) return;
-  const rect = canvas.getBoundingClientRect();
+  const cssWidth = Math.max(300, canvas.parentElement.clientWidth);
+  const cssHeight = 200;
   const dpr = Math.max(1, window.devicePixelRatio || 1);
-  const width = Math.max(500, Math.round(rect.width * dpr));
-  const height = Math.round(200 * dpr);
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
   const ctx = canvas.getContext('2d');
-  const scale = dpr;
-  const w = canvas.width / scale;
-  const h = canvas.height / scale;
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  ctx.clearRect(0, 0, w, h);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
   if (!visibleData.length) return;
 
-  const left = 35, right = 10, top = 10, bottom = 25;
-  const graphWidth = w - left - right;
-  const graphHeight = h - top - bottom;
-  const values = visibleData.map(point => point.count);
-  let min = Math.min(...values);
-  let max = Math.max(...values);
-  const padding = Math.max(1, (max - min) * 0.1);
-  min -= padding;
-  max += padding;
-  if (max === min) max = min + 1;
-
-  const step = graphWidth / (visibleData.length - 1 || 1);
-  const pointAt = index => ({
+  const left = 42, right = 12, top = 12, bottom = 28;
+  const graphWidth = cssWidth - left - right;
+  const graphHeight = cssHeight - top - bottom;
+  const step = graphWidth / Math.max(1, visibleData.length - 1);
+  const points = visibleData.map((point, index) => ({
     x: left + index * step,
-    y: top + graphHeight - ((visibleData[index].count - min) / (max - min)) * graphHeight
-  });
-  const points = visibleData.map((_, index) => pointAt(index));
+    y: top + graphHeight - (Math.max(0, Math.min(Y_MAX, point.count)) / Y_MAX) * graphHeight
+  }));
 
-  ctx.strokeStyle = '#2a2a2a';
-  ctx.lineWidth = .5;
   ctx.font = '10px system-ui, sans-serif';
-  ctx.fillStyle = '#888';
-  ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
-
-  for (let i = 0; i <= 4; i++) {
-    const value = min + i / 4 * (max - min);
-    const y = top + graphHeight - i / 4 * graphHeight;
+  ctx.textAlign = 'right';
+  for (let value = 0; value <= Y_MAX; value += 5) {
+    const y = top + graphHeight - (value / Y_MAX) * graphHeight;
+    ctx.strokeStyle = '#2a2a2a';
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(left, y);
-    ctx.lineTo(w - right, y);
+    ctx.lineTo(cssWidth - right, y);
     ctx.stroke();
-    ctx.fillText(String(Math.round(value)), left - 5, y);
+    ctx.fillStyle = '#888';
+    ctx.fillText(String(value), left - 7, y);
   }
 
   ctx.textAlign = 'center';
   ctx.textBaseline = 'alphabetic';
   const last = visibleData.length - 1;
-  ctx.fillText(formatDate(visibleData[0].time), left, h - 8);
+  ctx.fillText(formatDate(visibleData[0].time), points[0].x, cssHeight - 8);
   if (last > 1) {
     const middle = Math.floor(last / 2);
-    ctx.fillText(formatDate(visibleData[middle].time), points[middle].x, h - 8);
+    ctx.fillText(formatDate(visibleData[middle].time), points[middle].x, cssHeight - 8);
   }
-  ctx.fillText(formatDate(visibleData[last].time), points[last].x, h - 8);
+  if (last > 0) ctx.fillText(formatDate(visibleData[last].time), points[last].x, cssHeight - 8);
 
   ctx.beginPath();
   points.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
   ctx.strokeStyle = '#4a8cff';
   ctx.lineWidth = 2;
   ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
   ctx.stroke();
 
-  points.forEach((point, index) => {
+  for (const [index, point] of points.entries()) {
+    if (visibleData.length > 100 && index !== hoveredIndex) continue;
     ctx.beginPath();
-    ctx.arc(point.x, point.y, index === hoveredIndex ? 5 : (visibleData.length > 200 ? 1.5 : 3), 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, index === hoveredIndex ? 5 : 3, 0, Math.PI * 2);
     ctx.fillStyle = index === hoveredIndex ? '#7fadff' : '#4a8cff';
     ctx.fill();
-  });
+  }
 
   if (hoveredIndex >= 0 && hoveredIndex < points.length) {
     const point = points[hoveredIndex];
@@ -183,15 +189,15 @@ function renderChart() {
     ctx.moveTo(point.x, top);
     ctx.lineTo(point.x, top + graphHeight);
     ctx.strokeStyle = '#555';
-    ctx.lineWidth = .8;
+    ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const label = `${visibleData[hoveredIndex].count} players`;
+    const label = `${Math.round(visibleData[hoveredIndex].count)} players`;
     ctx.font = '11px system-ui, sans-serif';
     const boxWidth = ctx.measureText(label).width + 10;
-    const boxX = Math.min(point.x + 10, w - boxWidth - 5);
+    const boxX = Math.min(point.x + 10, cssWidth - boxWidth - 5);
     const boxY = Math.max(point.y - 25, 5);
     ctx.fillStyle = '#2a2a2a';
     ctx.fillRect(boxX, boxY, boxWidth, 20);
@@ -211,7 +217,7 @@ function update() {
 
 async function load() {
   try {
-    const response = await fetch('/api/player-count?points=2000', { cache: 'no-store' });
+    const response = await fetch('/api/player-count?points=20000', { cache: 'no-store' });
     if (!response.ok) throw new Error('player history request failed');
     const data = await response.json();
     rawPoints = Array.isArray(data.points) ? data.points : [];
@@ -239,13 +245,15 @@ function mount() {
   const canvas = document.getElementById('historyChart');
   canvas.addEventListener('mousemove', event => {
     const rect = canvas.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * 500 / rect.width;
-    const left = 35;
-    const right = 10;
-    if (!visibleData.length || x < left - 5 || x > 500 - right + 5) {
+    const x = (event.clientX - rect.left) * (canvas.width / (window.devicePixelRatio * rect.width));
+    const cssWidth = rect.width;
+    const left = 42;
+    const right = 12;
+    const graphWidth = cssWidth - left - right;
+    if (!visibleData.length || x < left - 5 || x > cssWidth - right + 5) {
       hoveredIndex = -1;
     } else {
-      const step = (500 - left - right) / (visibleData.length - 1 || 1);
+      const step = graphWidth / (visibleData.length - 1 || 1);
       hoveredIndex = Math.max(0, Math.min(visibleData.length - 1, Math.round((x - left) / step)));
     }
     renderChart();
@@ -258,9 +266,6 @@ function mount() {
   load();
 }
 
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', mount, { once: true });
-} else {
-  mount();
-}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once: true });
+else mount();
 })();
