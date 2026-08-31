@@ -169,7 +169,10 @@ remote_download() {
 valid_download() {
     local file="$1"
     [ -s "$file" ] || return 1
-    unzip -tq -- "$file" >/dev/null 2>&1
+    case "$(head -c 2 -- "$file")" in
+        PK) return 0 ;;
+        *)  return 1 ;;
+    esac
 }
 
 download_file() {
