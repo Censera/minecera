@@ -1,14 +1,269 @@
 (() => {
 'use strict';
-const ranges=[['day',1],['week',7],['month',30],['year',365],['all',Infinity]];
-let currentRange='week',rawPoints=[],visibleData=[],hoveredIndex=-1;
-function mount(){const panel=document.querySelector('.chart-panel');if(!panel)return;panel.className='chart-panel player-history-panel';panel.innerHTML=`<div class="player-history"><h3 class="player-history-title">Player History</h3><canvas id="historyChart" width="500" height="200" aria-label="Player history line chart"></canvas><div class="player-history-stats"><div><span>Peak</span> <strong id="peakPlayers">--</strong></div><div><span>Avg</span> <strong id="avgPlayers">--</strong></div></div><div class="player-history-controls"><div class="player-history-ranges">${ranges.map(([n])=>`<button type="button" class="player-history-range${n===currentRange?' active':''}" data-range="${n}">${n[0].toUpperCase()+n.slice(1)}</button>`).join('')}</div></div></div>`;style();panel.querySelectorAll('.player-history-range').forEach(b=>b.onclick=()=>{currentRange=b.dataset.range;panel.querySelectorAll('.player-history-range').forEach(x=>x.classList.toggle('active',x===b));update()});const c=document.getElementById('historyChart');c.onmousemove=e=>{const r=c.getBoundingClientRect(),x=(e.clientX-r.left)*c.width/r.width,l=35,rr=10; if(!visibleData.length||x<l-5||x>c.width-rr+5)hoveredIndex=-1;else{const s=(c.width-l-rr)/(visibleData.length-1||1);hoveredIndex=Math.max(0,Math.min(visibleData.length-1,Math.round((x-l)/s)))}draw()};c.onmouseleave=()=>{hoveredIndex=-1;draw()};addEventListener('resize',draw);load()}
-function style(){if(document.getElementById('player-history-style'))return;const s=document.createElement('style');s.id='player-history-style';s.textContent='.chart-panel.player-history-panel{padding:0;overflow:hidden;background:#1e1e1e;border:0;border-radius:12px}.player-history{width:100%;padding:2rem;color:#e0e0e0}.player-history-title{margin:0 0 1.5rem;font-weight:400;font-size:1.2rem;letter-spacing:-.01em;color:#f0f0f0}#historyChart{display:block;width:100%;height:auto;background:#1a1a1a;border-radius:8px;cursor:crosshair}.player-history-stats{display:flex;gap:1.5rem;margin:1rem 0;font-size:.85rem;color:#b0b0b0}.player-history-stats div{display:flex;align-items:baseline;gap:.5rem}.player-history-stats span{color:#888;font-size:.8rem}.player-history-stats strong{color:#f5f5f5;font-size:.9rem;font-weight:400}.player-history-controls{display:flex;align-items:center;margin-top:1rem}.player-history-ranges{display:flex;gap:.6rem;flex-wrap:wrap}.player-history-range{background:none;border:0;border-radius:8px;padding:.5rem 1rem;font-size:.85rem;cursor:pointer;color:#ccc;font-weight:400}.player-history-range.active{background:#3a7afe;color:white}.player-history-range:hover:not(.active){background:#2a2a2a}@media(max-width:600px){.player-history{padding:1.25rem}.player-history-ranges{gap:.25rem}.player-history-range{padding:.45rem .75rem}}';document.head.append(s)}
-function startDay(t){const d=new Date(t*1e3);d.setHours(0,0,0,0);return d.getTime()/1e3}
-function daily(p){const m=new Map();for(const x of p){const d=startDay(Number(x.time)),e=m.get(d)||{time:d,sum:0,n:0};e.sum+=Number(x.count)||0;e.n++;m.set(d,e)}return [...m.values()].sort((a,b)=>a.time-b.time).map(e=>({time:e.time,count:Math.round(e.sum/e.n)}))}
-function data(){const a=daily(rawPoints),r=ranges.find(x=>x[0]===currentRange);return r[1]===Infinity?a:a.slice(-r[1])}
-function update(){visibleData=data();const c=visibleData.map(x=>x.count),p=document.getElementById('peakPlayers'),a=document.getElementById('avgPlayers');p.textContent=c.length?Math.max(...c):'--';a.textContent=c.length?Math.round(c.reduce((s,x)=>s+x,0)/c.length):'--';hoveredIndex=-1;draw()}
-function draw(){const c=document.getElementById('historyChart');if(!c)return;const x=c.getContext('2d'),w=c.width,h=c.height;x.clearRect(0,0,w,h);if(!visibleData.length)return;const l=35,r=10,t=10,b=25,gw=w-l-r,gh=h-t-b,v=visibleData.map(p=>p.count);let min=Math.min(...v),max=Math.max(...v),pad=Math.max(1,(max-min)*.1);min-=pad;max+=pad;if(max===min)max=min+1;const step=gw/(visibleData.length-1||1),pt=i=>({x:l+i*step,y:t+gh-((visibleData[i].count-min)/(max-min))*gh}),pts=visibleData.map((_,i)=>pt(i));x.strokeStyle='#2a2a2a';x.lineWidth=.5;x.font='10px system-ui,sans-serif';x.fillStyle='#888';x.textAlign='right';x.textBaseline='middle';for(let i=0;i<=4;i++){const val=min+i/4*(max-min),y=t+gh-i/4*gh;x.beginPath();x.moveTo(l,y);x.lineTo(w-r,y);x.stroke();x.fillText(Math.round(val),l-5,y)}x.textAlign='center';x.textBaseline='alphabetic';const fmt=q=>{const d=new Date(q*1e3);return currentRange==='day'?d.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):d.toLocaleDateString([],{month:'short',day:'numeric'})},last=pts.length-1;x.fillText(fmt(visibleData[0].time),l,h-8);if(last>1){const m=Math.floor(last/2);x.fillText(fmt(visibleData[m].time),pts[m].x,h-8)}x.fillText(fmt(visibleData[last].time),pts[last].x,h-8);x.beginPath();pts.forEach((p,i)=>i?x.lineTo(p.x,p.y):x.moveTo(p.x,p.y));x.strokeStyle='#4a8cff';x.lineWidth=2;x.lineJoin='round';x.stroke();pts.forEach((p,i)=>{x.beginPath();x.arc(p.x,p.y,i===hoveredIndex?5:3,0,Math.PI*2);x.fillStyle=i===hoveredIndex?'#7fadff':'#4a8cff';x.fill()});if(hoveredIndex>=0){const p=pts[hoveredIndex];x.beginPath();x.moveTo(p.x,t);x.lineTo(p.x,t+gh);x.strokeStyle='#555';x.lineWidth=.8;x.setLineDash([3,3]);x.stroke();x.setLineDash([]);const s=`${visibleData[hoveredIndex].count} players`;x.font='11px system-ui,sans-serif';const bw=x.measureText(s).width+10,bx=Math.min(p.x+10,w-bw-5),by=Math.max(p.y-25,5);x.fillStyle='#2a2a2a';x.fillRect(bx,by,bw,20);x.fillStyle='#f0f0f0';x.textAlign='left';x.textBaseline='middle';x.fillText(s,bx+5,by+10)}}
-async function load(){try{const r=await fetch('/api/player-count?points=2000',{cache:'no-store'});if(!r.ok)throw 0;const d=await r.json();rawPoints=Array.isArray(d.points)?d.points:[]}catch{rawPoints=[]}update()}
-addEventListener('DOMContentLoaded',mount)
+
+const RANGES = { day: 86400, week: 7 * 86400, month: 30 * 86400, year: 365 * 86400, all: 0 };
+let range = 'week';
+let rawPoints = [];
+let visibleData = [];
+let hoveredIndex = -1;
+
+function startOfDay(timestamp) {
+  const date = new Date(timestamp * 1000);
+  date.setHours(0, 0, 0, 0);
+  return Math.floor(date.getTime() / 1000);
+}
+
+function aggregateDaily(points) {
+  const days = new Map();
+  for (const point of points) {
+    const time = Number(point.time);
+    const count = Number(point.count);
+    if (!Number.isFinite(time) || !Number.isFinite(count)) continue;
+    const day = startOfDay(time);
+    const entry = days.get(day) || { time: day, sum: 0, samples: 0 };
+    entry.sum += count;
+    entry.samples++;
+    days.set(day, entry);
+  }
+  return [...days.values()]
+    .sort((a, b) => a.time - b.time)
+    .map(entry => ({ time: entry.time, count: Math.round(entry.sum / entry.samples) }));
+}
+
+function dataForRange() {
+  if (!rawPoints.length) return [];
+  const now = Math.floor(Date.now() / 1000);
+  if (range === 'day') {
+    return rawPoints.filter(point => Number(point.time) >= now - RANGES.day);
+  }
+  const data = aggregateDaily(rawPoints);
+  const seconds = RANGES[range];
+  return seconds ? data.filter(point => point.time >= now - seconds) : data;
+}
+
+function formatDate(timestamp) {
+  const date = new Date(timestamp * 1000);
+  if (range === 'day') {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function style() {
+  if (document.getElementById('player-history-style')) return;
+  const style = document.createElement('style');
+  style.id = 'player-history-style';
+  style.textContent = `
+    .chart-panel.player-history-panel{padding:0;overflow:hidden;background:#1e1e1e;border:0;border-radius:12px}
+    .player-history{width:100%;padding:2rem;color:#e0e0e0}
+    .player-history-title{margin:0 0 1.5rem;font-weight:400;font-size:1.2rem;letter-spacing:-.01em;color:#f0f0f0}
+    #historyChart{display:block;width:100%;height:auto;background:#1a1a1a;border-radius:8px;cursor:crosshair}
+    .player-history-stats{display:flex;gap:1.5rem;margin:1rem 0;font-size:.85rem;color:#b0b0b0}
+    .player-history-stats div{display:flex;align-items:baseline;gap:.5rem}
+    .player-history-stats span{color:#888;font-size:.8rem;font-weight:400}
+    .player-history-stats strong{color:#f5f5f5;font-size:.9rem;font-weight:400}
+    .player-history-controls{display:flex;align-items:center;margin-top:1rem}
+    .player-history-ranges{display:flex;gap:.6rem;flex-wrap:wrap}
+    .player-history-range{background:none;border:0;border-radius:8px;padding:.5rem 1rem;font-size:.85rem;cursor:pointer;color:#ccc;transition:background .15s,color .15s;font-weight:400}
+    .player-history-range.active{background:#3a7afe;color:white}
+    .player-history-range:hover:not(.active){background:#2a2a2a}
+    @media(max-width:600px){.player-history{padding:1.25rem}.player-history-ranges{gap:.25rem}.player-history-range{padding:.45rem .75rem}}
+  `;
+  document.head.append(style);
+}
+
+function panelHTML() {
+  return `<div class="player-history">
+    <h3 class="player-history-title">Player History</h3>
+    <canvas id="historyChart" width="500" height="200" aria-label="Player history line chart"></canvas>
+    <div class="player-history-stats">
+      <div><span>Peak</span> <strong id="peakPlayers">--</strong></div>
+      <div><span>Avg</span> <strong id="avgPlayers">--</strong></div>
+    </div>
+    <div class="player-history-controls">
+      <div class="player-history-ranges">
+        ${Object.keys(RANGES).map(name => `<button type="button" class="player-history-range${name === range ? ' active' : ''}" data-range="${name}">${name[0].toUpperCase()}${name.slice(1)}</button>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function updateStats() {
+  const peak = document.getElementById('peakPlayers');
+  const avg = document.getElementById('avgPlayers');
+  if (!visibleData.length) {
+    peak.textContent = '--';
+    avg.textContent = '--';
+    return;
+  }
+  const counts = visibleData.map(point => point.count);
+  peak.textContent = String(Math.max(...counts));
+  avg.textContent = String(Math.round(counts.reduce((sum, count) => sum + count, 0) / counts.length));
+}
+
+function renderChart() {
+  const canvas = document.getElementById('historyChart');
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const width = Math.max(500, Math.round(rect.width * dpr));
+  const height = Math.round(200 * dpr);
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+
+  const ctx = canvas.getContext('2d');
+  const scale = dpr;
+  const w = canvas.width / scale;
+  const h = canvas.height / scale;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!visibleData.length) return;
+
+  const left = 35, right = 10, top = 10, bottom = 25;
+  const graphWidth = w - left - right;
+  const graphHeight = h - top - bottom;
+  const values = visibleData.map(point => point.count);
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  const padding = Math.max(1, (max - min) * 0.1);
+  min -= padding;
+  max += padding;
+  if (max === min) max = min + 1;
+
+  const step = graphWidth / (visibleData.length - 1 || 1);
+  const pointAt = index => ({
+    x: left + index * step,
+    y: top + graphHeight - ((visibleData[index].count - min) / (max - min)) * graphHeight
+  });
+  const points = visibleData.map((_, index) => pointAt(index));
+
+  ctx.strokeStyle = '#2a2a2a';
+  ctx.lineWidth = .5;
+  ctx.font = '10px system-ui, sans-serif';
+  ctx.fillStyle = '#888';
+  ctx.textAlign = 'right';
+  ctx.textBaseline = 'middle';
+
+  for (let i = 0; i <= 4; i++) {
+    const value = min + i / 4 * (max - min);
+    const y = top + graphHeight - i / 4 * graphHeight;
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(w - right, y);
+    ctx.stroke();
+    ctx.fillText(String(Math.round(value)), left - 5, y);
+  }
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  const last = visibleData.length - 1;
+  ctx.fillText(formatDate(visibleData[0].time), left, h - 8);
+  if (last > 1) {
+    const middle = Math.floor(last / 2);
+    ctx.fillText(formatDate(visibleData[middle].time), points[middle].x, h - 8);
+  }
+  ctx.fillText(formatDate(visibleData[last].time), points[last].x, h - 8);
+
+  ctx.beginPath();
+  points.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
+  ctx.strokeStyle = '#4a8cff';
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  points.forEach((point, index) => {
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, index === hoveredIndex ? 5 : (range === 'day' ? 2.5 : 3), 0, Math.PI * 2);
+    ctx.fillStyle = index === hoveredIndex ? '#7fadff' : '#4a8cff';
+    ctx.fill();
+  });
+
+  if (hoveredIndex >= 0 && hoveredIndex < points.length) {
+    const point = points[hoveredIndex];
+    ctx.beginPath();
+    ctx.moveTo(point.x, top);
+    ctx.lineTo(point.x, top + graphHeight);
+    ctx.strokeStyle = '#555';
+    ctx.lineWidth = .8;
+    ctx.setLineDash([3, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    const label = `${visibleData[hoveredIndex].count} players`;
+    ctx.font = '11px system-ui, sans-serif';
+    const boxWidth = ctx.measureText(label).width + 10;
+    const boxX = Math.min(point.x + 10, w - boxWidth - 5);
+    const boxY = Math.max(point.y - 25, 5);
+    ctx.fillStyle = '#2a2a2a';
+    ctx.fillRect(boxX, boxY, boxWidth, 20);
+    ctx.fillStyle = '#f0f0f0';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, boxX + 5, boxY + 10);
+  }
+}
+
+function update() {
+  visibleData = dataForRange();
+  updateStats();
+  hoveredIndex = -1;
+  renderChart();
+}
+
+async function load() {
+  try {
+    const response = await fetch('/api/player-count?points=2000', { cache: 'no-store' });
+    if (!response.ok) throw new Error('player history request failed');
+    const data = await response.json();
+    rawPoints = Array.isArray(data.points) ? data.points : [];
+  } catch (_) {
+    rawPoints = [];
+  }
+  update();
+}
+
+function mount() {
+  const panel = document.querySelector('.chart-panel');
+  if (!panel) return;
+  style();
+  panel.className = 'chart-panel player-history-panel';
+  panel.innerHTML = panelHTML();
+
+  panel.querySelectorAll('.player-history-range').forEach(button => {
+    button.addEventListener('click', () => {
+      range = button.dataset.range;
+      panel.querySelectorAll('.player-history-range').forEach(item => item.classList.toggle('active', item === button));
+      update();
+    });
+  });
+
+  const canvas = document.getElementById('historyChart');
+  canvas.addEventListener('mousemove', event => {
+    const rect = canvas.getBoundingClientRect();
+    const x = (event.clientX - rect.left) * canvas.width / rect.width / (window.devicePixelRatio || 1);
+    const left = 35;
+    const right = 10;
+    if (!visibleData.length || x < left - 5 || x > 500 - right + 5) {
+      hoveredIndex = -1;
+    } else {
+      const step = (500 - left - right) / (visibleData.length - 1 || 1);
+      hoveredIndex = Math.max(0, Math.min(visibleData.length - 1, Math.round((x - left) / step)));
+    }
+    renderChart();
+  });
+  canvas.addEventListener('mouseleave', () => {
+    hoveredIndex = -1;
+    renderChart();
+  });
+  window.addEventListener('resize', renderChart);
+  load();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mount, { once: true });
+} else {
+  mount();
+}
 })();
