@@ -151,12 +151,18 @@ remote_download() {
     local output="$2"
 
     if [[ "$url" == *drive.google.com/* || "$url" == *drive.usercontent.google.com/* ]]; then
-        command -v gdown >/dev/null 2>&1 || {
-            echo "Google Drive download requires gdown: $url" >&2
-            return 1
-        }
-        gdown --fuzzy "$url" --output "$output"
-        return $?
+        if command -v gdown >/dev/null 2>&1; then
+            gdown --fuzzy "$url" --output "$output"
+            return $?
+        fi
+
+        if python3 -c 'import gdown' >/dev/null 2>&1; then
+            python3 -m gdown --fuzzy "$url" --output "$output"
+            return $?
+        fi
+
+        echo "Google Drive download requires gdown (command or Python module): $url" >&2
+        return 1
     fi
 
     curl --fail --silent --show-error --location \
