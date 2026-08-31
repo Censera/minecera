@@ -17,7 +17,7 @@ import (
 const (
 	playerCountRecordSize = 10
 	playerCountSampleRate = 5 * time.Second
-	playerCountMaxPoints  = 2000
+	playerCountMaxPoints  = 1000000
 	minecraftStatusPort   = 25565
 )
 
