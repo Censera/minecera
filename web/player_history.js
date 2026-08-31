@@ -33,19 +33,16 @@ function aggregateDaily(points) {
 function dataForRange() {
   if (!rawPoints.length) return [];
   const now = Math.floor(Date.now() / 1000);
-  if (range === 'day') {
-    return rawPoints.filter(point => Number(point.time) >= now - RANGES.day);
-  }
-  const data = aggregateDaily(rawPoints);
   const seconds = RANGES[range];
-  return seconds ? data.filter(point => point.time >= now - seconds) : data;
+  const filtered = seconds ? rawPoints.filter(point => Number(point.time) >= now - seconds) : rawPoints.slice();
+  if (range === 'day') return filtered;
+  const days = new Set(filtered.map(point => startOfDay(Number(point.time))));
+  return days.size >= 2 ? aggregateDaily(filtered) : filtered;
 }
 
 function formatDate(timestamp) {
   const date = new Date(timestamp * 1000);
-  if (range === 'day') {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
+  if (range === 'day') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
@@ -175,7 +172,7 @@ function renderChart() {
 
   points.forEach((point, index) => {
     ctx.beginPath();
-    ctx.arc(point.x, point.y, index === hoveredIndex ? 5 : (range === 'day' ? 2.5 : 3), 0, Math.PI * 2);
+    ctx.arc(point.x, point.y, index === hoveredIndex ? 5 : (visibleData.length > 200 ? 1.5 : 3), 0, Math.PI * 2);
     ctx.fillStyle = index === hoveredIndex ? '#7fadff' : '#4a8cff';
     ctx.fill();
   });
@@ -242,7 +239,7 @@ function mount() {
   const canvas = document.getElementById('historyChart');
   canvas.addEventListener('mousemove', event => {
     const rect = canvas.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * canvas.width / rect.width / (window.devicePixelRatio || 1);
+    const x = (event.clientX - rect.left) * 500 / rect.width;
     const left = 35;
     const right = 10;
     if (!visibleData.length || x < left - 5 || x > 500 - right + 5) {
