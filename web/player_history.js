@@ -1,97 +1,111 @@
 (() => {
 'use strict';
 
-const RANGE_SECONDS = { day: 86400, week: 7 * 86400, month: 30 * 86400, year: 365 * 86400, all: 0 };
-const MAX_POINTS = 1200;
-const Y_MAX = 15;
+const RANGE_SECONDS = {
+  day: 86400,
+  week: 7 * 86400,
+  month: 30 * 86400,
+  year: 365 * 86400,
+  all: 0
+};
+const MAX_PLAYERS = 15;
+const TARGET_POINTS = 220;
+
 let range = 'week';
 let rawPoints = [];
 let visibleData = [];
 let hoveredIndex = -1;
 
 function startOfDay(timestamp) {
-  const d = new Date(timestamp * 1000);
-  d.setHours(0, 0, 0, 0);
-  return Math.floor(d.getTime() / 1000);
+  const date = new Date(timestamp * 1000);
+  date.setHours(0, 0, 0, 0);
+  return Math.floor(date.getTime() / 1000);
 }
 
-function aggregate(points, bucketSeconds) {
+function averageByTime(points, bucketSeconds) {
+  if (!points.length || bucketSeconds <= 0) return points.slice();
+
   const buckets = new Map();
   for (const point of points) {
     const time = Number(point.time);
     const count = Number(point.count);
     if (!Number.isFinite(time) || !Number.isFinite(count)) continue;
-    const bucket = bucketSeconds > 1 ? Math.floor(time / bucketSeconds) * bucketSeconds : time;
+
+    const bucket = Math.floor(time / bucketSeconds) * bucketSeconds;
     const entry = buckets.get(bucket) || { time: bucket, sum: 0, samples: 0 };
     entry.sum += count;
     entry.samples++;
     buckets.set(bucket, entry);
   }
+
   return [...buckets.values()]
     .sort((a, b) => a.time - b.time)
-    .map(entry => ({ time: entry.time, count: entry.sum / entry.samples }));
-}
-
-function decimate(points) {
-  if (points.length <= MAX_POINTS) return points;
-  const bucketSize = Math.ceil(points.length / MAX_POINTS);
-  const result = [];
-  for (let i = 0; i < points.length; i += bucketSize) {
-    const bucket = points.slice(i, i + bucketSize);
-    const sum = bucket.reduce((total, point) => total + point.count, 0);
-    result.push({
-      time: bucket[Math.floor(bucket.length / 2)].time,
-      count: sum / bucket.length
-    });
-  }
-  return result;
+    .map(entry => ({
+      time: entry.time + bucketSeconds / 2,
+      count: Math.round(entry.sum / entry.samples)
+    }));
 }
 
 function dataForRange() {
+  if (!rawPoints.length) return [];
+
   const now = Math.floor(Date.now() / 1000);
   const seconds = RANGE_SECONDS[range];
   const filtered = seconds
     ? rawPoints.filter(point => Number(point.time) >= now - seconds)
     : rawPoints.slice();
 
-  if (!filtered.length) return [];
-  if (range === 'day') return decimate(filtered);
+  filtered.sort((a, b) => Number(a.time) - Number(b.time));
+  if (filtered.length < TARGET_POINTS) return filtered;
 
-  const days = new Set(filtered.map(point => startOfDay(Number(point.time))));
-  if (days.size <= 1) return decimate(filtered);
-  return aggregate(filtered, 86400);
+  const first = Number(filtered[0].time);
+  const last = Number(filtered[filtered.length - 1].time);
+  const span = Math.max(1, last - first);
+  const bucketSeconds = Math.max(1, Math.ceil(span / TARGET_POINTS));
+  return averageByTime(filtered, bucketSeconds);
 }
 
-function style() {
+function formatTime(timestamp) {
+  const date = new Date(timestamp * 1000);
+  if (range === 'day') {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function injectStyle() {
   if (document.getElementById('player-history-style')) return;
   const style = document.createElement('style');
   style.id = 'player-history-style';
   style.textContent = `
-    .chart-panel.player-history-panel{padding:0;overflow:hidden;background:#1e1e1e;border:0;border-radius:12px}
-    .player-history{width:100%;padding:2rem;color:#e0e0e0}
-    .player-history-title{margin:0 0 1.5rem;font-weight:400;font-size:1.2rem;letter-spacing:-.01em;color:#f0f0f0}
-    #historyChart{display:block;width:100%;height:auto;background:#1a1a1a;border-radius:8px;cursor:crosshair}
-    .player-history-stats{display:flex;gap:1.5rem;margin:1rem 0;font-size:.85rem;color:#b0b0b0}
-    .player-history-stats div{display:flex;align-items:baseline;gap:.5rem}
-    .player-history-stats span{color:#888;font-size:.8rem;font-weight:400}
-    .player-history-stats strong{color:#f5f5f5;font-size:.9rem;font-weight:400}
-    .player-history-controls{display:flex;align-items:center;margin-top:1rem}
-    .player-history-ranges{display:flex;gap:.6rem;flex-wrap:wrap}
-    .player-history-range{background:none;border:0;border-radius:8px;padding:.5rem 1rem;font-size:.85rem;cursor:pointer;color:#ccc;transition:background .15s,color .15s;font-weight:400}
-    .player-history-range.active{background:#3a7afe;color:white}
-    .player-history-range:hover:not(.active){background:#2a2a2a}
-    @media(max-width:600px){.player-history{padding:1.25rem}.player-history-ranges{gap:.25rem}.player-history-range{padding:.45rem .75rem}}
+    .chart-panel.player-history-panel{padding:14px;overflow:hidden}
+    .player-history{width:100%}
+    .player-history-title{margin:0;font-size:11px;font-weight:700;color:var(--text);text-transform:lowercase}
+    .player-history-subtitle{margin-top:3px;color:var(--dim);font-size:10px}
+    #historyChart{display:block;width:100%;height:auto;margin-top:10px;background:transparent;border:0;cursor:crosshair}
+    .player-history-stats{display:flex;gap:18px;margin-top:9px;color:var(--muted);font-size:10px}
+    .player-history-stats div{display:flex;align-items:baseline;gap:5px}
+    .player-history-stats span{color:var(--dim);font-size:9px;text-transform:uppercase;letter-spacing:.06em}
+    .player-history-stats strong{font:600 11px var(--mono);color:var(--text)}
+    .player-history-controls{display:flex;align-items:center;margin-top:10px}
+    .player-history-ranges{display:flex;gap:2px;flex-wrap:wrap;padding:2px;border:1px solid var(--line);border-radius:5px;background:var(--panel2)}
+    .player-history-range{border:0;border-radius:3px;padding:4px 8px;background:transparent;color:var(--dim);font:10px var(--sans);cursor:pointer}
+    .player-history-range:hover{color:var(--text)}
+    .player-history-range.active{background:var(--line2);color:var(--text)}
+    @media(max-width:600px){.chart-panel.player-history-panel{padding:11px}.player-history-range{padding:4px 7px}}
   `;
   document.head.append(style);
 }
 
 function panelHTML() {
   return `<div class="player-history">
-    <h3 class="player-history-title">Player History</h3>
-    <canvas id="historyChart" width="500" height="200" aria-label="Player history line chart"></canvas>
+    <h3 class="player-history-title">player history</h3>
+    <div class="player-history-subtitle">online players over time</div>
+    <canvas id="historyChart" width="700" height="230" aria-label="Player history line chart"></canvas>
     <div class="player-history-stats">
-      <div><span>Peak</span> <strong id="peakPlayers">--</strong></div>
-      <div><span>Avg</span> <strong id="avgPlayers">--</strong></div>
+      <div><span>peak</span><strong id="peakPlayers">--</strong></div>
+      <div><span>avg</span><strong id="avgPlayers">--</strong></div>
+      <div><span>samples</span><strong id="sampleCount">--</strong></div>
     </div>
     <div class="player-history-controls">
       <div class="player-history-ranges">
@@ -104,107 +118,136 @@ function panelHTML() {
 function updateStats() {
   const peak = document.getElementById('peakPlayers');
   const avg = document.getElementById('avgPlayers');
+  const samples = document.getElementById('sampleCount');
   if (!visibleData.length) {
     peak.textContent = '--';
     avg.textContent = '--';
+    samples.textContent = '0';
     return;
   }
+
   const counts = visibleData.map(point => point.count);
-  peak.textContent = String(Math.round(Math.max(...counts)));
-  avg.textContent = String(Math.round(counts.reduce((sum, value) => sum + value, 0) / counts.length));
+  peak.textContent = String(Math.max(...counts));
+  avg.textContent = String(Math.round(counts.reduce((sum, count) => sum + count, 0) / counts.length));
+  samples.textContent = String(visibleData.length);
 }
 
-function formatDate(timestamp) {
-  const date = new Date(timestamp * 1000);
-  if (range === 'day') return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+function resizeCanvas(canvas) {
+  const rect = canvas.getBoundingClientRect();
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const width = Math.max(320, Math.round(rect.width * dpr));
+  const height = Math.round(230 * dpr);
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  return { dpr, width: canvas.width / dpr, height: canvas.height / dpr };
 }
 
 function renderChart() {
   const canvas = document.getElementById('historyChart');
   if (!canvas) return;
-  const cssWidth = Math.max(300, canvas.parentElement.clientWidth);
-  const cssHeight = 200;
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  canvas.width = Math.round(cssWidth * dpr);
-  canvas.height = Math.round(cssHeight * dpr);
+
+  const { dpr, width: w, height: h } = resizeCanvas(canvas);
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, cssWidth, cssHeight);
-  if (!visibleData.length) return;
+  ctx.clearRect(0, 0, w, h);
 
-  const left = 42, right = 12, top = 12, bottom = 28;
-  const graphWidth = cssWidth - left - right;
-  const graphHeight = cssHeight - top - bottom;
-  const step = graphWidth / Math.max(1, visibleData.length - 1);
-  const points = visibleData.map((point, index) => ({
-    x: left + index * step,
-    y: top + graphHeight - (Math.max(0, Math.min(Y_MAX, point.count)) / Y_MAX) * graphHeight
-  }));
+  const left = 32;
+  const right = 8;
+  const top = 8;
+  const bottom = 27;
+  const graphWidth = w - left - right;
+  const graphHeight = h - top - bottom;
 
-  ctx.font = '10px system-ui, sans-serif';
+  ctx.font = '9px system-ui, sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'right';
-  for (let value = 0; value <= Y_MAX; value += 5) {
-    const y = top + graphHeight - (value / Y_MAX) * graphHeight;
-    ctx.strokeStyle = '#2a2a2a';
+  ctx.fillStyle = 'var(--dim)';
+
+  const ticks = [0, 5, 10, 15];
+  for (const value of ticks) {
+    const y = top + graphHeight - (value / MAX_PLAYERS) * graphHeight;
+    ctx.strokeStyle = value === 0 ? '#30363d' : '#20262d';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(left, y);
-    ctx.lineTo(cssWidth - right, y);
+    ctx.lineTo(w - right, y);
     ctx.stroke();
-    ctx.fillStyle = '#888';
-    ctx.fillText(String(value), left - 7, y);
+    ctx.fillStyle = '#6e7271';
+    ctx.fillText(String(value), left - 6, y);
   }
 
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'alphabetic';
-  const last = visibleData.length - 1;
-  ctx.fillText(formatDate(visibleData[0].time), points[0].x, cssHeight - 8);
-  if (last > 1) {
-    const middle = Math.floor(last / 2);
-    ctx.fillText(formatDate(visibleData[middle].time), points[middle].x, cssHeight - 8);
+  if (!visibleData.length) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#6e7271';
+    ctx.fillText('no player history yet', left + graphWidth / 2, top + graphHeight / 2);
+    return;
   }
-  if (last > 0) ctx.fillText(formatDate(visibleData[last].time), points[last].x, cssHeight - 8);
+
+  const first = Number(visibleData[0].time);
+  const last = Number(visibleData[visibleData.length - 1].time);
+  const span = Math.max(1, last - first);
+  const pointAt = index => {
+    const point = visibleData[index];
+    const x = left + ((Number(point.time) - first) / span) * graphWidth;
+    const y = top + graphHeight - (Math.max(0, Math.min(MAX_PLAYERS, Number(point.count))) / MAX_PLAYERS) * graphHeight;
+    return { x, y };
+  };
+  const points = visibleData.map((_, index) => pointAt(index));
 
   ctx.beginPath();
-  points.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
-  ctx.strokeStyle = '#4a8cff';
+  points.forEach((point, index) => {
+    if (index === 0) ctx.moveTo(point.x, point.y);
+    else ctx.lineTo(point.x, point.y);
+  });
+  ctx.strokeStyle = '#6aa6ff';
   ctx.lineWidth = 2;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
   ctx.stroke();
 
-  for (const [index, point] of points.entries()) {
-    if (visibleData.length > 100 && index !== hoveredIndex) continue;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, index === hoveredIndex ? 5 : 3, 0, Math.PI * 2);
-    ctx.fillStyle = index === hoveredIndex ? '#7fadff' : '#4a8cff';
-    ctx.fill();
+  if (points.length <= 80) {
+    points.forEach((point, index) => {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, index === hoveredIndex ? 4 : 2, 0, Math.PI * 2);
+      ctx.fillStyle = index === hoveredIndex ? '#b8e88a' : '#6aa6ff';
+      ctx.fill();
+    });
   }
+
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#6e7271';
+  ctx.fillText(formatTime(first), left, h - 7);
+  if (points.length > 2) {
+    const middle = Math.floor((points.length - 1) / 2);
+    ctx.fillText(formatTime(visibleData[middle].time), points[middle].x, h - 7);
+  }
+  ctx.fillText(formatTime(last), points[points.length - 1].x, h - 7);
 
   if (hoveredIndex >= 0 && hoveredIndex < points.length) {
     const point = points[hoveredIndex];
     ctx.beginPath();
     ctx.moveTo(point.x, top);
     ctx.lineTo(point.x, top + graphHeight);
-    ctx.strokeStyle = '#555';
-    ctx.lineWidth = 1;
     ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = '#3a434e';
+    ctx.lineWidth = 1;
     ctx.stroke();
     ctx.setLineDash([]);
 
-    const label = `${Math.round(visibleData[hoveredIndex].count)} players`;
-    ctx.font = '11px system-ui, sans-serif';
-    const boxWidth = ctx.measureText(label).width + 10;
-    const boxX = Math.min(point.x + 10, cssWidth - boxWidth - 5);
-    const boxY = Math.max(point.y - 25, 5);
-    ctx.fillStyle = '#2a2a2a';
-    ctx.fillRect(boxX, boxY, boxWidth, 20);
-    ctx.fillStyle = '#f0f0f0';
+    const label = `${visibleData[hoveredIndex].count} players`;
+    ctx.font = '10px system-ui, sans-serif';
+    const boxWidth = ctx.measureText(label).width + 12;
+    const boxX = Math.max(4, Math.min(point.x + 8, w - boxWidth - 4));
+    const boxY = Math.max(4, point.y - 27);
+    ctx.fillStyle = '#151a20';
+    ctx.fillRect(boxX, boxY, boxWidth, 19);
+    ctx.fillStyle = '#f2f0e9';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillText(label, boxX + 5, boxY + 10);
+    ctx.fillText(label, boxX + 6, boxY + 9.5);
   }
 }
 
@@ -217,12 +260,13 @@ function update() {
 
 async function load() {
   try {
-    const response = await fetch('/api/player-count?points=20000', { cache: 'no-store' });
+    const response = await fetch('/api/player-count?points=2000', { cache: 'no-store' });
     if (!response.ok) throw new Error('player history request failed');
     const data = await response.json();
     rawPoints = Array.isArray(data.points) ? data.points : [];
-  } catch (_) {
+  } catch (error) {
     rawPoints = [];
+    console.error('Player history:', error);
   }
   update();
 }
@@ -230,7 +274,8 @@ async function load() {
 function mount() {
   const panel = document.querySelector('.chart-panel');
   if (!panel) return;
-  style();
+
+  injectStyle();
   panel.className = 'chart-panel player-history-panel';
   panel.innerHTML = panelHTML();
 
@@ -245,27 +290,45 @@ function mount() {
   const canvas = document.getElementById('historyChart');
   canvas.addEventListener('mousemove', event => {
     const rect = canvas.getBoundingClientRect();
-    const x = (event.clientX - rect.left) * (canvas.width / (window.devicePixelRatio * rect.width));
-    const cssWidth = rect.width;
-    const left = 42;
-    const right = 12;
-    const graphWidth = cssWidth - left - right;
-    if (!visibleData.length || x < left - 5 || x > cssWidth - right + 5) {
+    const x = (event.clientX - rect.left) * 500 / rect.width;
+    const left = 32;
+    const right = 8;
+
+    if (!visibleData.length || x < left - 6 || x > 500 - right + 6) {
       hoveredIndex = -1;
-    } else {
-      const step = graphWidth / (visibleData.length - 1 || 1);
-      hoveredIndex = Math.max(0, Math.min(visibleData.length - 1, Math.round((x - left) / step)));
+      renderChart();
+      return;
     }
+
+    const first = Number(visibleData[0].time);
+    const last = Number(visibleData[visibleData.length - 1].time);
+    const span = Math.max(1, last - first);
+    let nearest = 0;
+    let distance = Infinity;
+    for (let index = 0; index < visibleData.length; index++) {
+      const pointX = left + ((Number(visibleData[index].time) - first) / span) * (500 - left - right);
+      const candidate = Math.abs(pointX - x);
+      if (candidate < distance) {
+        distance = candidate;
+        nearest = index;
+      }
+    }
+    hoveredIndex = nearest;
     renderChart();
   });
+
   canvas.addEventListener('mouseleave', () => {
     hoveredIndex = -1;
     renderChart();
   });
+
   window.addEventListener('resize', renderChart);
   load();
 }
 
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount, { once: true });
-else mount();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', mount, { once: true });
+} else {
+  mount();
+}
 })();
