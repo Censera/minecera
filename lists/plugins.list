@@ -9,7 +9,7 @@ destination "plugins"
 + ClickMobs.jar (https://cdn.modrinth.com/data/tRdRT5jS/versions/tte1UNeO/ClickMobs-paper-1.3.1.jar)
 + ForcePack.jar (https://cdn.modrinth.com/data/v182E90X/versions/5WQR2HMs/forcepack-1.3.75-SNAPSHOT-paper-velocity.jar)
 + SkinsRestorer.jar (https://cdn.modrinth.com/data/TsLS8Py5/versions/wXS6bHiC/SkinsRestorer.jar)
-+ BetterView.jar (https://cdn.modrinth.com/data/kBLRbfKH/versions/f6yD7X4t/betterview-paper-2.2.0-all.jar)
+- BetterView.jar (https://cdn.modrinth.com/data/kBLRbfKH/versions/f6yD7X4t/betterview-paper-2.2.0-all.jar)
 + PlayerViewDistance.jar (https://cdn.modrinth.com/data/bbLWrvPt/versions/Jm84of2U/playerviewdistance-paper-2.1.0%2Bmc26.x.jar)
 + Burn.jar (https://github.com/Censera/burn/releases/download/v1.4.2/burn.jar)
 + HorsePassenger.jar (https://github.com/Censera/second-passenger/releases/download/v0.1.0/second-passenger-0.1.0.jar)
